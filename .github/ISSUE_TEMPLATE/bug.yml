@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: 'ntfy-mcp version'
-      placeholder: '0.2.3 (npm version, docker tag or commit)'
+      placeholder: '0.1.0 (npm version or commit)'
     validations:
       required: true
   - type: input
