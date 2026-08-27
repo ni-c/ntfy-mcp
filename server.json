@@ -1,0 +1,80 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ni-c/ntfy-mcp",
+  "title": "ntfy",
+  "description": "Publish ntfy notifications, read the message cache, and manage users and topic access",
+  "websiteUrl": "https://ntfy-mcp.ni-c.de",
+  "repository": {
+    "url": "https://github.com/ni-c/ntfy-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ni-c/ntfy-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NTFY_URL",
+          "description": "Base URL of the ntfy server, e.g. https://ntfy.example.net. There is deliberately no default.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_TOKEN",
+          "description": "ntfy access token (tk_...). Optional: an open instance needs no credentials. Mutually exclusive with NTFY_USERNAME/NTFY_PASSWORD.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_USERNAME",
+          "description": "Username for basic authentication. Must be set together with NTFY_PASSWORD.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_PASSWORD",
+          "description": "Password for basic authentication. Must be set together with NTFY_USERNAME.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_TOPICS",
+          "description": "Comma-separated topics the server may use. The first is the default when a tool omits one, and the list restricts every read and write tool.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_READ_ONLY",
+          "description": "Set to exactly true to register only the six read tools (default: false — ntfy exists to publish)",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "NTFY_INSECURE_TLS",
+          "description": "Set to true to accept a self-signed certificate from the ntfy server (default: false)",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "NTFY_ALLOW_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to register; 'essential' selects a curated preset (default: all tools)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "NTFY_DENY_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to remove from whatever the allow list left",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
