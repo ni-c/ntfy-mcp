@@ -1,0 +1,55 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Lockstep packages: bumped separately they arrive as individually broken PRs.
+      vitest:
+        patterns:
+          - vitest
+          - '@vitest/*'
+      eslint:
+        patterns:
+          - eslint
+          - '@eslint/*'
+          - typescript-eslint
+      # Dependabot is documented to put a dependency in the first group it matches,
+      # but a pattern-less catch-all claims it anyway (dependabot-core#9765). Without
+      # these exclusions @vitest/coverage-v8 lands here while vitest goes to the group
+      # above, and the half-updated lockfile leaves an unsatisfiable peer edge — npm ci
+      # then dies with "Cannot read properties of null (reading 'edgesOut')", naming
+      # neither the package nor the cause. Keep this list in sync with the groups above.
+      minor-and-patch:
+        exclude-patterns:
+          - vitest
+          - '@vitest/*'
+          - eslint
+          - '@eslint/*'
+          - typescript-eslint
+        update-types:
+          - minor
+          - patch
+
+  # The documentation site has its own manifest so its toolchain never lands in the
+  # runtime image or the test matrix.
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+    groups:
+      docs:
+        patterns:
+          - '*'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # init and analyze are separate dependencies to Dependabot but must always
+      # move together — a version mismatch kills the codeql job.
+      codeql:
+        patterns:
+          - github/codeql-action*
