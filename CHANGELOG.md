@@ -1,0 +1,64 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+<!-- The release workflow extracts the section of the version being tagged with awk,
+     matching "## [x.y.z]". Keep that heading shape exactly. -->
+
+<!-- The docs site includes everything between these markers. Keep the end marker
+     last in the file so the link definitions come along. -->
+<!-- #region changelog -->
+
+## [Unreleased]
+
+## [0.1.0] - 2026-08-27
+
+### Added
+
+- Initial release: an MCP server for [ntfy](https://ntfy.sh), covering
+  publishing, reading the message cache, and user and topic-access
+  administration.
+- Thirteen tools. Six read: `list_messages`, `get_message`,
+  `check_topic_access`, `get_server_info`, `get_account`, `list_users`. Seven
+  write: `publish_message`, `update_message`, `mark_messages_read`,
+  `delete_messages`, `create_user`, `delete_user`, `manage_user_access`.
+- `NTFY_ALLOW_TOOLS` and `NTFY_DENY_TOOLS` narrow the tool list by name or by a
+  trailing-`*` prefix, and `NTFY_ALLOW_TOOLS=essential` selects a curated six
+  that cover publishing and verifying end to end.
+- `NTFY_TOPICS` names the topics the server may touch. The first entry is the
+  default when a tool omits one, which keeps a topic name — a bearer secret on a
+  public instance — out of the tool arguments; the list also bounds every read
+  and write tool.
+- Basic authentication (`NTFY_USERNAME` / `NTFY_PASSWORD`) alongside access
+  tokens (`NTFY_TOKEN`), because `ntfy user add` produces a username and
+  password rather than a token. Setting both forms is refused at startup rather
+  than resolved by a precedence rule.
+
+### Security
+
+- `NTFY_READ_ONLY` defaults to `false`, unlike the same variable in
+  [imap-mcp](https://github.com/ni-c/imap-mcp), where it defaults to `true`.
+  ntfy exists to publish; a read-only default would ship a notification server
+  that cannot notify. Because of that direction, only the literal string `true`
+  disables the write tools — a typo leaves them enabled. The destructive tools
+  are gated behind confirmation tokens and ntfy's own permissions instead, and
+  `NTFY_ALLOW_TOOLS=essential` or a `NTFY_DENY_TOOLS` list is the recommended
+  hardening.
+- `delete_messages`, `delete_user` and `manage_user_access` require a
+  server-generated confirmation token bound to a fingerprint of the exact
+  target, so a confirmation for one target cannot execute another or a longer
+  list.
+- Access tokens are removed from `get_account` output. ntfy returns every token
+  of the account in plaintext there, which would otherwise put a live credential
+  into the conversation transcript. The account's `sync_topic` is removed for the
+  same reason — a topic name is a bearer secret.
+- `click`, `icon`, `attach` and every action button URL are restricted to
+  `http:` and `https:`. ntfy stores whatever it is given, and these URLs are
+  opened by the recipient's device rather than by the server.
+- Publishing cannot send email or place a phone call, and no tool creates,
+  reads or exchanges an ntfy access token.
+
+<!-- #endregion changelog -->
