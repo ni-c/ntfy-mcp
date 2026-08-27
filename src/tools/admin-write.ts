@@ -5,6 +5,7 @@ import type { NtfyApi } from '../api.js';
 import {
   confirmationPrompt,
   setResourceKey,
+  tupleResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
 import { jsonResult, run, textResult } from '../result.js';
@@ -169,7 +170,10 @@ export function registerAdminWriteTools(
     },
     async (args) =>
       run(async () => {
-        const key = setResourceKey('manage_user_access', [
+        // tupleResourceKey, not setResourceKey: these three are positional and
+        // their vocabularies overlap, so sorting them would let a token
+        // approved for one (user, topic) pair execute the reverse pair.
+        const key = tupleResourceKey('manage_user_access', [
           args.username,
           args.topic,
           args.action,

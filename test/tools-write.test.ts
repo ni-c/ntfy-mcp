@@ -402,6 +402,30 @@ describe('manage_user_access', () => {
     expect(harness.text(swapped)).toContain('confirm_token');
   });
 
+  it('will not reuse a token with the username and topic swapped', async () => {
+    // A username is a legal topic and vice versa, so a key that sorted its
+    // parts would give these two calls the same fingerprint: approving a grant
+    // on one (user, topic) pair would execute the reverse pair, which nobody
+    // was shown.
+    const harness = await connect({}, () => ({}));
+    const first = await harness.call('manage_user_access', {
+      username: 'alice',
+      topic: 'deploy',
+      action: 'read_only',
+    });
+    const token = /confirm_token="([a-f0-9]{32})"/.exec(
+      harness.text(first)
+    )?.[1];
+    const swapped = await harness.call('manage_user_access', {
+      username: 'deploy',
+      topic: 'alice',
+      action: 'read_only',
+      confirm_token: token,
+    });
+    expect(harness.calls).toHaveLength(0);
+    expect(harness.text(swapped)).toContain('confirm_token');
+  });
+
   it('accepts a wildcard here, which publishing does not', async () => {
     const harness = await connect({}, () => ({}));
     const result = await harness.call('manage_user_access', {

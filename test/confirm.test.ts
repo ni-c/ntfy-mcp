@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConfirmationStore, setResourceKey } from '../src/confirm.js';
+import {
+  ConfirmationStore,
+  setResourceKey,
+  tupleResourceKey,
+} from '../src/confirm.js';
 
 describe('ConfirmationStore', () => {
   it('rejects a call without a token and accepts the issued one once', () => {
@@ -62,5 +66,50 @@ describe('ConfirmationStore', () => {
 
   it('reports the TTL it actually uses', () => {
     expect(new ConfirmationStore().ttlMinutes).toBe(5);
+  });
+
+  it('does not let a positional key be reordered', () => {
+    // setResourceKey sorts, which is right for a set of message ids and wrong
+    // for an argument list. manage_user_access is confirmed on
+    // (username, topic, action) and those vocabularies overlap almost
+    // entirely, so under a sort "grant alice read_only on deploy" and "grant
+    // deploy read_only on alice" would share a key.
+    const store = new ConfirmationStore();
+    const approved = tupleResourceKey('manage_user_access', [
+      'alice',
+      'deploy',
+      'read_only',
+    ]);
+    const swapped = tupleResourceKey('manage_user_access', [
+      'deploy',
+      'alice',
+      'read_only',
+    ]);
+    expect(approved).not.toBe(swapped);
+    const token = store.issue(approved);
+    expect(store.consume(swapped, token)).toBe(false);
+
+    // And the same swap under the set key would have succeeded, which is the
+    // bug this replaces.
+    expect(setResourceKey('x', ['alice', 'deploy', 'read_only'])).toBe(
+      setResourceKey('x', ['deploy', 'alice', 'read_only'])
+    );
+  });
+
+  it('still treats a genuine set as unordered', () => {
+    expect(setResourceKey('delete_messages', ['a', 'b'])).toBe(
+      setResourceKey('delete_messages', ['b', 'a'])
+    );
+  });
+
+  it('forgets an expired entry instead of holding its slot', async () => {
+    const store = new ConfirmationStore(1);
+    const resource = setResourceKey('delete_messages', ['a']);
+    const token = store.issue(resource);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(store.consume(resource, token)).toBe(false);
+    // A fresh token for the same target must still work afterwards.
+    const second = store.issue(resource);
+    expect(store.consume(resource, second)).toBe(true);
   });
 });

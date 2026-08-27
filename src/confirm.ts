@@ -39,7 +39,14 @@ export class ConfirmationStore {
   consume(resource: string, token: string | undefined): boolean {
     const entry = this.pending.get(resource);
     if (entry === undefined || token === undefined) return false;
-    if (token !== entry.token || Date.now() >= entry.expiresAt) return false;
+    if (Date.now() >= entry.expiresAt) {
+      // Drop it rather than leaving it to occupy a MAX_PENDING slot until FIFO
+      // pressure evicts it — expired entries crowding out live ones is the only
+      // way this map costs anything.
+      this.pending.delete(resource);
+      return false;
+    }
+    if (token !== entry.token) return false;
     this.pending.delete(resource);
     return true;
   }
@@ -50,17 +57,41 @@ export class ConfirmationStore {
   }
 }
 
+function fingerprint(operation: string, parts: string[]): string {
+  return `${operation}:${createHash('sha256')
+    .update(JSON.stringify(parts))
+    .digest('hex')
+    .slice(0, 16)}`;
+}
+
 /**
- * Resource key for an operation on a *set* of targets. Without the fingerprint a
- * confirmation for ["a.txt"] would also execute ["a.txt", "secrets.env"] — the
- * model chooses the second list, and only the id would have been checked.
+ * Resource key for an operation on an unordered *set* of targets. Without the
+ * fingerprint a confirmation for ["a.txt"] would also execute
+ * ["a.txt", "secrets.env"] — the model chooses the second list, and only the id
+ * would have been checked.
+ *
+ * Sorting is what makes it a set: ["a","b"] and ["b","a"] name the same targets
+ * and must share a key. Only use this where that is true. For an *ordered*
+ * argument list use {@link tupleResourceKey}.
  */
 export function setResourceKey(operation: string, targets: string[]): string {
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify([...targets].sort()))
-    .digest('hex')
-    .slice(0, 16);
-  return `${operation}:${fingerprint}`;
+  return fingerprint(operation, [...targets].sort());
+}
+
+/**
+ * Resource key for an operation whose arguments are positional.
+ *
+ * Separate from {@link setResourceKey} because sorting would be a security bug
+ * here, not a convenience. `manage_user_access` is confirmed on
+ * (username, topic, action), and those three vocabularies overlap almost
+ * entirely — a username is a legal topic, and every action name is a legal
+ * value for either. Under a sort, confirming "grant alice read_only on topic
+ * deploy" produces the same key as "grant deploy read_only on topic alice", so
+ * a token approved for one account and topic would execute a grant on a
+ * different pair that was never shown to anyone.
+ */
+export function tupleResourceKey(operation: string, parts: string[]): string {
+  return fingerprint(operation, parts);
 }
 
 /**
