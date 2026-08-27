@@ -35,12 +35,13 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --project tsconfig.test.json",
     "watch": "tsc --watch",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run lint && npm run build && npm test",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build && npm test",
     "assets": "node scripts/gen-assets.mjs",
     "assets:check": "node scripts/gen-assets.mjs --check"
   },

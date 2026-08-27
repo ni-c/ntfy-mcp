@@ -301,7 +301,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           typeof account === 'object' &&
           account !== null &&
           'role' in account &&
-          typeof (account as { role: unknown }).role === 'string'
+          typeof account.role === 'string'
             ? (account as { role: string }).role
             : undefined;
 
@@ -377,7 +377,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
     },
     async (args) =>
       run(async () => {
-        const users = (await api.get('/v1/users')) as unknown;
+        const users = await api.get('/v1/users');
         let filtered = (Array.isArray(users) ? users : []).map(toUserView);
         if (args.username !== undefined) {
           filtered = filtered.filter((user) => user.username === args.username);
@@ -429,18 +429,34 @@ function toUserView(entry: unknown): UserView {
   const source = (entry ?? {}) as Record<string, unknown>;
   const grants = Array.isArray(source.grants) ? source.grants : [];
   const view: UserView = {
-    username: String(source.username ?? '(unknown)'),
-    role: String(source.role ?? '(unknown)'),
+    username: text(source.username, '(unknown)'),
+    role: text(source.role, '(unknown)'),
     grants: grants.map((grant) => {
       const g = (grant ?? {}) as Record<string, unknown>;
       return {
-        topic: String(g.topic ?? ''),
-        permission: String(g.permission ?? ''),
+        topic: text(g.topic, ''),
+        permission: text(g.permission, ''),
       };
     }),
   };
   if (typeof source.tier === 'string') view.tier = source.tier;
   return view;
+}
+
+/**
+ * A string field of an upstream object, or the fallback.
+ *
+ * `String(value)` would turn an object into the literal "[object Object]" and a
+ * nested structure into a field that looks like a name — which is exactly the
+ * shape a hostile upstream would send to smuggle something past a projection
+ * that only checks for presence.
+ */
+function text(value: unknown, fallback: string): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return fallback;
 }
 
 /** Whether an ACL pattern (which may end in `*`) covers `topic`. */

@@ -81,7 +81,7 @@ export const messageIdParam = z
  * caller-controlled method, headers and body.
  *
  * Which is also why the check is scheme-only, with no private-address rule:
- * `http://192.168.1.10/api/light` is the *intended* use of an `http` action for
+ * `http://192.168.1.1/api/light` is the *intended* use of an `http` action for
  * home automation, and the request never leaves the recipient's own network.
  */
 export const httpUrl = z

@@ -141,9 +141,22 @@ export class NtfyApi {
       }
       return fallback;
     }
+    // Checked here as well as in `topicParam` at every tool boundary. This is
+    // the function that owns the concept, and it is the last thing between a
+    // caller-supplied string and a URL path — a new tool that forgets the zod
+    // schema should not also lose the guard against "../" and "?".
+    if (!/^[-_A-Za-z0-9]{1,64}$/.test(topic)) {
+      throw new Error(
+        `"${topic}" is not a valid ntfy topic — 1 to 64 characters of ` +
+          'letters, digits, "-" and "_"'
+      );
+    }
     if (allowed.length > 0 && !allowed.includes(topic)) {
-      // Deliberately does not echo the configured list: naming the other topics
-      // would hand out exactly the secret the allowlist exists to protect.
+      // Names the count, not the topics. `get_server_info` does report the
+      // whole list, and the difference is the destination rather than the
+      // secrecy of the value: a tool result goes to the model, which needs to
+      // know which topics it may use and already holds the default one, while
+      // an error string ends up in the host's log file.
       throw new Error(
         `topic "${topic}" is not in NTFY_TOPICS, which restricts this server ` +
           `to ${allowed.length} topic(s)`

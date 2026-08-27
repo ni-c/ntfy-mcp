@@ -96,9 +96,7 @@ export function buildToolFilter(config: {
   // tools never reach `registerTool`, but they stay in the catalogue so that a
   // name from that half is answered with "read-only suppresses it", never with
   // "no such tool".
-  const registered = new Set<string>(
-    config.readOnly ? READ_TOOLS : (ALL_TOOLS as readonly string[])
-  );
+  const registered = new Set<string>(config.readOnly ? READ_TOOLS : ALL_TOOLS);
 
   // Set when an allow entry named real tools and read-only suppressed all of
   // them, so that "nothing is left" can name the reason rather than shrugging.

@@ -173,7 +173,7 @@ describe('resolveTopic', () => {
     expect(() => api.resolveTopic('other')).toThrow(
       expect.objectContaining({
         message: expect.not.stringContaining('private-x') as unknown as string,
-      }) as unknown as Error
+      }) as unknown
     );
   });
 

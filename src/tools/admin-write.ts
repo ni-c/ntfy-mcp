@@ -203,8 +203,7 @@ export function registerAdminWriteTools(
           });
         }
 
-        const permission =
-          ACCESS_ACTIONS[args.action as keyof typeof ACCESS_ACTIONS];
+        const permission = ACCESS_ACTIONS[args.action];
         await api.put('/v1/users/access', {
           username: args.username,
           topic: args.topic,

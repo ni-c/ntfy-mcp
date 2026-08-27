@@ -8,9 +8,9 @@ afterEach(() => {
 
 /** Turns `process.exit` into a throw so the tests can assert on it. */
 function catchExit(): void {
-  vi.spyOn(process, 'exit').mockImplementation((() => {
+  vi.spyOn(process, 'exit').mockImplementation(() => {
     throw new Error('exited');
-  }) as never);
+  });
 }
 
 describe('loadConfig', () => {

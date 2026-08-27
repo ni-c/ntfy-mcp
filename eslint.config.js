@@ -5,7 +5,22 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   { ignores: ['dist/', 'coverage/', 'docs/'] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  // Type-aware rather than syntactic. The syntactic preset cannot see that a
+  // value came from `unknown`, and this codebase reads a lot of upstream JSON:
+  // no-unsafe-assignment and no-unsafe-member-access are the rules that make an
+  // unchecked cast of an API response visible.
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        // tsconfig.test.json, not tsconfig.json: the latter builds dist/ and
+        // therefore includes only src/, which would leave every file under
+        // test/ without type information and unparseable to these rules.
+        project: ['./tsconfig.test.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': [
@@ -23,5 +38,14 @@ export default tseslint.config(
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly' },
     },
+  },
+  {
+    // A fetch stub has to hand back a promise, and `async () => new Response()`
+    // is the readable way to write one — there is nothing to await inside it.
+    // The same shape appears wherever a test drives `run()`, whose callback is
+    // async by signature. The rule is right about production code and wrong
+    // about both of these.
+    files: ['test/**/*.ts'],
+    rules: { '@typescript-eslint/require-await': 'off' },
   }
 );

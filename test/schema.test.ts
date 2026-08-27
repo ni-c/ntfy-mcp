@@ -80,7 +80,7 @@ describe('httpUrl', () => {
     // An `http` action button firing at a local device is the intended use for
     // home automation, and the request never leaves the recipient's network —
     // so this is deliberately not an SSRF guard.
-    expect(httpUrl.safeParse('http://192.168.1.10/api/light').success).toBe(
+    expect(httpUrl.safeParse('http://192.168.1.1/api/light').success).toBe(
       true
     );
   });

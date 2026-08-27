@@ -200,10 +200,15 @@ function parseTopics(raw: string | undefined): readonly string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (!TOPIC_PATTERN.test(entry)) {
+      // Position, not value. NTFY_TOPICS is the variable a misplaced line in a
+      // compose file lands in, and for a stdio server stderr is the host's log
+      // file. Note which values reach here: a real ntfy token (tk_ plus 29
+      // alphanumerics) *passes* this pattern and is accepted as a topic, so the
+      // only strings that fail it are the ones with punctuation — passwords.
       console.error(
-        `ntfy-mcp: NTFY_TOPICS contains "${entry}", which is not a valid ntfy ` +
+        `ntfy-mcp: entry ${index + 1} of NTFY_TOPICS is not a valid ntfy ` +
           'topic — 1 to 64 characters of letters, digits, "-" and "_".'
       );
       process.exit(1);
