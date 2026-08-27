@@ -21,6 +21,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
  */
 const MAX_RESPONSE_BYTES = 2_000_000;
 
+/** Ceiling on a non-JSON success body, which no endpoint here should return. */
+const MAX_TEXT_BODY = 2000;
+
 /** How long a `GET /v1/account` answer is reused. */
 const ACCOUNT_CACHE_MS = 60_000;
 
@@ -228,6 +231,11 @@ export class NtfyApi {
         }
         chunks.push(decoder.decode(value, { stream: true }));
       }
+    } catch (error) {
+      // Abort the transfer instead of leaving the socket for the collector —
+      // the over-limit case is exactly when the far end is still sending.
+      await reader.cancel().catch(() => undefined);
+      throw error;
     } finally {
       reader.releaseLock();
     }
@@ -258,7 +266,23 @@ export class NtfyApi {
         return text;
       }
     }
-    return text;
+    // A 200 whose body is not JSON is not a success this client understands.
+    // ntfy answers a path that matches no API route by serving its web app —
+    // status 200, content-type text/html — so returning the body verbatim
+    // would hand a whole HTML page to the caller as if it were data. Some
+    // endpoints legitimately answer with a short plain-text body, so those
+    // still pass through, bounded.
+    if (contentType.includes('text/html')) {
+      throw new NtfyApiError(
+        response.status,
+        '(HTML page omitted — this path did not reach an ntfy API route)',
+        method,
+        path
+      );
+    }
+    return text.length > MAX_TEXT_BODY
+      ? `${text.slice(0, MAX_TEXT_BODY)}… (truncated)`
+      : text;
   }
 
   get(path: string): Promise<unknown> {

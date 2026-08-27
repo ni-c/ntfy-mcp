@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { NtfyApiError, type NtfyApi } from '../api.js';
-import { buildEnvelope, toView } from '../messages.js';
+import { buildEnvelope, MAX_RESULT_BYTES, toView } from '../messages.js';
 import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
 import {
   messageIdParam,
@@ -16,6 +16,8 @@ import {
 const MAX_TOPICS = 10;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const DEFAULT_USER_LIMIT = 100;
+const MAX_USER_LIMIT = 500;
 
 /** A section of `get_server_info` that could not be fetched. */
 interface Unavailable {
@@ -188,9 +190,14 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
               'hours by default) — or it was published to another topic.'
           );
         }
-        return untrustedResult(
-          JSON.stringify(toView(found, { preview: false }), null, 2)
-        );
+        // The same total budget list_messages honours. Without it this tool
+        // is the way around the envelope cap: one notification, returned in
+        // full, with the fields a publisher chose.
+        let body = JSON.stringify(toView(found, { preview: false }), null, 2);
+        if (Buffer.byteLength(body, 'utf8') > MAX_RESULT_BYTES) {
+          body = JSON.stringify(toView(found, { preview: true }), null, 2);
+        }
+        return untrustedResult(body);
       })
   );
 
@@ -298,6 +305,12 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
             ? (account as { role: string }).role
             : undefined;
 
+        // jsonResult, not untrustedResult, unlike the other read tools: these
+        // four sections are the instance's own configuration and counters,
+        // set by whoever runs the server this client was pointed at — not by a
+        // third party who happened to learn a topic name. Half the object is
+        // also derived here rather than fetched, and marking that as upstream
+        // content would be a lie in the other direction.
         return jsonResult({
           health,
           config,
@@ -325,7 +338,14 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
       annotations: { readOnlyHint: true },
       inputSchema: {},
     },
-    async () => run(async () => jsonResult(redactAccount(await api.account())))
+    async () =>
+      run(async () =>
+        // Token labels and the tier name are free text somebody typed, so the
+        // result is framed as data rather than as this server speaking.
+        untrustedResult(
+          JSON.stringify(redactAccount(await api.account()), null, 2)
+        )
+      )
   );
 
   server.registerTool(
@@ -346,30 +366,81 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .describe(
             'Return only accounts with a grant whose pattern matches this topic.'
           ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_USER_LIMIT)
+          .optional()
+          .describe(`Accounts to return (default ${DEFAULT_USER_LIMIT}).`),
       },
     },
     async (args) =>
       run(async () => {
-        const users = (await api.get('/v1/users')) as {
-          username: string;
-          role: string;
-          grants?: { topic: string; permission: string }[];
-        }[];
-        let filtered = Array.isArray(users) ? users : [];
+        const users = (await api.get('/v1/users')) as unknown;
+        let filtered = (Array.isArray(users) ? users : []).map(toUserView);
         if (args.username !== undefined) {
           filtered = filtered.filter((user) => user.username === args.username);
         }
         if (args.topic !== undefined) {
           const topic = args.topic;
           filtered = filtered.filter((user) =>
-            (user.grants ?? []).some((grant) =>
-              grantMatches(grant.topic, topic)
-            )
+            user.grants.some((grant) => grantMatches(grant.topic, topic))
           );
         }
-        return jsonResult({ count: filtered.length, users: filtered });
+
+        const total = filtered.length;
+        const shown = filtered.slice(0, args.limit ?? DEFAULT_USER_LIMIT);
+        const payload: Record<string, unknown> = {
+          count: shown.length,
+          total,
+          users: shown,
+        };
+        if (shown.length < total) {
+          payload.note =
+            `${total - shown.length} more account(s) exist. Narrow the ` +
+            'request with "username" or "topic", or raise "limit".';
+        }
+        // Usernames and grant patterns are instance content, not server
+        // metadata: on an instance with signup enabled, anyone on the internet
+        // chooses their own username.
+        return untrustedResult(JSON.stringify(payload, null, 2));
       })
   );
+}
+
+interface UserView {
+  username: string;
+  role: string;
+  tier?: string;
+  grants: { topic: string; permission: string }[];
+}
+
+/**
+ * Projects the four fields this tool is about, rather than spreading whatever
+ * ntfy sent.
+ *
+ * A denylist would only remove the sensitive keys known today. ntfy 2.27.0's
+ * user record happens to carry no password hash, but that is a property of this
+ * upstream release, not of this server — a newer or forked ntfy adding one
+ * would ship it into the transcript with no change here.
+ */
+function toUserView(entry: unknown): UserView {
+  const source = (entry ?? {}) as Record<string, unknown>;
+  const grants = Array.isArray(source.grants) ? source.grants : [];
+  const view: UserView = {
+    username: String(source.username ?? '(unknown)'),
+    role: String(source.role ?? '(unknown)'),
+    grants: grants.map((grant) => {
+      const g = (grant ?? {}) as Record<string, unknown>;
+      return {
+        topic: String(g.topic ?? ''),
+        permission: String(g.permission ?? ''),
+      };
+    }),
+  };
+  if (typeof source.tier === 'string') view.tier = source.tier;
+  return view;
 }
 
 /** Whether an ACL pattern (which may end in `*`) covers `topic`. */
