@@ -14,13 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-27
+## [0.1.0] - 2026-08-29
 
 ### Added
 
 - Initial release: an MCP server for [ntfy](https://ntfy.sh), covering
   publishing, reading the message cache, and user and topic-access
   administration.
+- A multi-architecture container image at `ghcr.io/ni-c/ntfy-mcp`
+  (amd64 and arm64), published with an SBOM and build provenance. It runs as
+  an unprivileged user with no npm in the runtime layer and speaks stdio
+  only, so it needs `-i` and exposes no port.
 - Thirteen tools. Six read: `list_messages`, `get_message`,
   `check_topic_access`, `get_server_info`, `get_account`, `list_users`. Seven
   write: `publish_message`, `update_message`, `mark_messages_read`,
