@@ -1,0 +1,9 @@
+{
+  "$comment": "Copy for docs/public/og.png, the GitHub social preview and the OpenGraph card. Rendered by scripts/gen-assets.mjs. Tagline and badges are split by hand because the renderer does not wrap text.",
+  "title": "ntfy-mcp",
+  "tagline": [
+    "An MCP server for ntfy — notifications your",
+    "assistant can send, read back and correct"
+  ],
+  "badges": ["13 tools", "revise in place", "MIT", "Node ≥22"]
+}

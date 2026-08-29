@@ -35,6 +35,14 @@ export default tseslint.config(
     // declaration, so the globals are named here instead of pulling in the
     // whole `globals` package for two of them.
     files: ['scripts/**/*.mjs'],
+    // The type-aware rules are switched off here rather than made to pass. These
+    // files are deliberately outside tsconfig.test.json — they are build tooling,
+    // not shipped code — so the type checker sees no declarations for them and
+    // every expression reads as `any`. That produces dozens of no-unsafe-*
+    // errors that say nothing about the script and would only be silenced by
+    // annotating plain JavaScript into submission. js.configs.recommended still
+    // applies, so real mistakes are still caught.
+    extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly' },
     },

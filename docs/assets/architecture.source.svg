@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SOURCE FILE — the one place the architecture diagram is edited.
+
+  `npm run assets` turns this into four rendered copies, which are the files that
+  actually get shown:
+
+    docs/public/architecture-light.svg   GitHub in its light theme
+    docs/public/architecture-dark.svg    GitHub in its dark theme
+    docs/public/architecture.svg         npm, and anything that strips <picture>
+    docs/index.md                        inline, follows the VitePress theme toggle
+
+  Geometry and labels only: no colours, no <style>. Everything is expressed through
+  the class contract that docs/.vitepress/theme/custom.css defines — .node,
+  .node-accent, .edge, .edge-accent, .edge-dashed, .label-title, .label-mono,
+  .label-muted — and the generator supplies a matching palette per output. The
+  generator refuses a source that carries its own fill/stroke or a <style> block.
+
+  Everything must stay inside the viewBox. Renderers clip at its edge rather than
+  growing the canvas, so a label that runs past the right edge is silently cut off
+  in every copy — check a render, not the markup, after moving anything.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 280" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">ntfy-mcp architecture</title>
+  <desc id="arch-desc">An MCP client talks to ntfy-mcp over stdio; ntfy-mcp publishes notifications and polls the message cache over HTTPS against an ntfy server, which pushes them to the subscribed devices. Because a published message keeps its sequence id, the same notification can be revised in place instead of sending another one.</desc>
+
+  <defs>
+    <marker id="arch-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" />
+    </marker>
+    <marker id="arch-arrow-accent" class="accent" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" />
+    </marker>
+  </defs>
+
+  <rect class="node" x="20" y="70" width="160" height="80" rx="10" />
+  <text class="label-title" x="100" y="103" text-anchor="middle">MCP client</text>
+  <text class="label-muted" x="100" y="123" text-anchor="middle">Claude, Codex, …</text>
+
+  <rect class="node-accent" x="290" y="55" width="170" height="110" rx="10" />
+  <text class="label-title" x="375" y="87" text-anchor="middle">ntfy-mcp</text>
+  <text class="label-muted" x="375" y="107" text-anchor="middle">13 tools</text>
+  <text class="label-muted" x="375" y="125" text-anchor="middle">topic allow-list</text>
+  <text class="label-muted" x="375" y="143" text-anchor="middle">confirm tokens</text>
+
+  <rect class="node" x="610" y="70" width="150" height="80" rx="10" />
+  <text class="label-title" x="685" y="103" text-anchor="middle">ntfy</text>
+  <text class="label-muted" x="685" y="123" text-anchor="middle">pub-sub server</text>
+
+  <path class="edge-accent" d="M180,110 L282,110" marker-end="url(#arch-arrow-accent)" />
+  <text class="label-mono" x="231" y="98" text-anchor="middle">stdio</text>
+
+  <path class="edge-accent" d="M460,95 L602,95" marker-end="url(#arch-arrow-accent)" />
+  <text class="label-mono" x="531" y="83" text-anchor="middle">HTTPS · publish</text>
+
+  <path class="edge-accent" d="M460,130 L602,130" marker-end="url(#arch-arrow-accent)" />
+  <text class="label-mono" x="531" y="152" text-anchor="middle">HTTPS · poll</text>
+
+  <path class="edge edge-dashed" d="M685,150 L685,196" marker-end="url(#arch-arrow)" />
+  <text class="label-muted" x="685" y="216" text-anchor="middle">subscribed devices get the push</text>
+  <text class="label-muted" x="685" y="232" text-anchor="middle">update_message revises it in place</text>
+</svg>

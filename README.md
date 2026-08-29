@@ -22,6 +22,23 @@ Thirteen tools is the ceiling, not the floor: `NTFY_ALLOW_TOOLS=essential` regis
 a curated six instead, and a model picks the right tool far more reliably from six
 than from thirteen — see [choosing which tools load](#choosing-which-tools-load).
 
+<!-- <picture> is resolved against the colour scheme of the page showing it, so GitHub
+     picks the variant that matches its own theme toggle. npm strips <picture> and
+     <source> when it sanitises the README and keeps the <img>, which is why that
+     fallback brings its own dark card instead of relying on a media query.
+
+     The URLs must stay absolute: a relative path is simply invisible on npm. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://ntfy-mcp.ni-c.de/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://ntfy-mcp.ni-c.de/architecture-light.svg">
+  <img src="https://ntfy-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to ntfy-mcp, which publishes notifications and polls the message cache over HTTPS against an ntfy server that pushes them to the subscribed devices" width="800">
+</picture>
+
+<!-- Recorded with vhs from docs/demo.tape against a throwaway ntfy container, so it
+     reproduces without touching a real instance — see the header of that file. -->
+
+![Demo: listing the tools, publishing a notification and revising it in place through the MCP Inspector CLI](https://ntfy-mcp.ni-c.de/demo.gif)
+
 ## Requirements
 
 - Node.js ≥ 22
