@@ -1,25 +1,5 @@
 # FAQ & troubleshooting
 
-<!-- Keep this entry. "A tool is missing" is the one question the tool filter
-     creates, and the answer people reach for first — a bug — is the wrong one. -->
-
-## One tool I expected is missing
-
-Something narrowed the list. In order of likelihood:
-
-- `NTFY_READ_ONLY` is set, and it is a write tool.
-- `NTFY_ALLOW_TOOLS` is set and does not name it — it is an allow list, so anything
-  not named is out. `NTFY_ALLOW_TOOLS=essential` is six tools, not thirteen.
-- `NTFY_DENY_TOOLS` names it, possibly through a prefix such as `delete_*`.
-
-A filtered tool is not registered at all, so it is missing from `tools/list` and
-answers `tools/call` with "tool not found" — the same as a write tool under
-read-only. There is no state where it is hidden but still callable.
-
-What it is _not_ is a typo in one of those variables: an entry that matches no tool
-stops the server at startup and says which entry it was. See
-[choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
-
 ## check_topic_access says no, but publishing works anyway
 
 Both answers are correct. **ntfy grants read and write separately per topic**, and
@@ -109,3 +89,24 @@ rather than an error. Each section is fetched independently and one that fails d
 not fail the call. The same object reports `admin_tools_available`, which answers
 "should I even try `list_users`, `create_user` and the access tools?" from one cheap
 call instead of after a confusing 401.
+
+<!-- Keep this entry, and keep it last. "A tool is missing" is the one question the
+     tool filter creates, and the answer people reach for first — a bug — is the
+     wrong one. -->
+
+## One tool I expected is missing
+
+Something narrowed the list. In order of likelihood:
+
+- `NTFY_READ_ONLY` is set, and it is a write tool.
+- `NTFY_ALLOW_TOOLS` is set and does not name it — it is an allow list, so anything
+  not named is out. `NTFY_ALLOW_TOOLS=essential` is six tools, not thirteen.
+- `NTFY_DENY_TOOLS` names it, possibly through a prefix such as `delete_*`.
+
+A filtered tool is not registered at all, so it is missing from `tools/list` and
+answers `tools/call` with "tool not found" — the same as a write tool under
+read-only. There is no state where it is hidden but still callable.
+
+What it is _not_ is a typo in one of those variables: an entry that matches no tool
+stops the server at startup and says which entry it was. See
+[choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
