@@ -58,9 +58,38 @@ NTFY_URL=http://127.0.0.1:8080 NTFY_TOPICS=alerts \
   npx @modelcontextprotocol/inspector npx -y @ni-c/ntfy-mcp
 ```
 
-<!-- "Through mcp-hub" goes here: after the last "how you actually run it" section,
-     which in this repository is the Inspector — there is no Docker image. It is a
-     peer of the other clients, never ranked above them.
+## Docker
+
+```sh
+docker run -i --rm \
+  -e NTFY_URL=https://ntfy.example.net -e NTFY_TOPICS=alerts \
+  ghcr.io/ni-c/ntfy-mcp
+```
+
+As an MCP client entry:
+
+```json
+{
+  "mcpServers": {
+    "ntfy-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "NTFY_URL=https://ntfy.example.net",
+        "-e", "NTFY_TOPICS=alerts",
+        "ghcr.io/ni-c/ntfy-mcp"
+      ]
+    }
+  }
+}
+```
+
+The image is multi-arch (amd64 and arm64), published with an SBOM and build
+provenance, and runs as the unprivileged `node` user with no npm in the runtime
+layer. It speaks stdio only, so it needs `-i` and exposes no port.
+
+<!-- "Through mcp-hub" goes here: after Docker, the last "how you actually run it"
+     section. It is a peer of the other clients, never ranked above them.
 
      The third paragraph is the one that matters and must not be cut. It is the
      only place the two filters sit side by side, and "allowTools": ["essential"]

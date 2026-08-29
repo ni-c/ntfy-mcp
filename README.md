@@ -5,6 +5,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/%40ni-c%2Fntfy-mcp)](https://www.npmjs.com/package/@ni-c/ntfy-mcp)
 [![node](https://img.shields.io/node/v/%40ni-c%2Fntfy-mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/%40ni-c%2Fntfy-mcp)](LICENSE)
+[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fntfy--mcp-blue)](https://github.com/ni-c/ntfy-mcp/pkgs/container/ntfy-mcp)
 [![docs](https://img.shields.io/badge/docs-ntfy--mcp.ni--c.de-informational)](https://ntfy-mcp.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
@@ -138,6 +139,14 @@ claude mcp add ntfy-mcp -- npx -y @ni-c/ntfy-mcp
 command = "npx"
 args = ["-y", "@ni-c/ntfy-mcp"]
 env = { NTFY_URL = "https://ntfy.example.net", NTFY_TOKEN = "…", NTFY_TOPICS = "deploys" }
+```
+
+### Docker
+
+```sh
+docker run -i --rm \
+  -e NTFY_URL=https://ntfy.example.net -e NTFY_TOPICS=deploys \
+  ghcr.io/ni-c/ntfy-mcp
 ```
 
 ## Tools
