@@ -235,6 +235,26 @@ existing ones show up.
   cuts finer along the same line — a filtered tool is never built, not refused at call
   time.
 
+## Development
+
+```sh
+npm install
+npm run build
+npm run lint && npm run typecheck && npm run test:coverage
+```
+
+The architecture diagram and the social card are generated: edit
+`docs/assets/architecture.source.svg` or `docs/assets/og.json` and run
+`npm run assets`, never the rendered copies under `docs/public/`. CI runs
+`npm run assets:check` and fails if they have drifted.
+
+The documentation site has its own manifest, so its toolchain never lands in the
+container image or the test matrix:
+
+```sh
+cd docs && npm install && npm run build
+```
+
 ## Releasing
 
 Releases are tag-driven. Bump `package.json`, move the `[Unreleased]` notes in
