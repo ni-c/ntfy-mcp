@@ -4,6 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint peers "typescript >=4.8.4 <6.1.0", so TypeScript 7 cannot
+      # be installed here — npm aborts with ERESOLVE. Dependabot keeps offering it
+      # anyway, and its attempt does not fail alone: resolving the peer dies with
+      # dependency_file_not_resolvable, which aborts the WHOLE npm run, so every
+      # other update that week is silently dropped too. That is what happened on
+      # 2026-08-27. Drop this entry once typescript-eslint widens the range.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
     groups:
       # Lockstep packages: bumped separately they arrive as individually broken PRs.
       vitest:
