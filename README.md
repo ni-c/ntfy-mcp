@@ -220,9 +220,18 @@ existing ones show up.
 
 ## Releasing
 
-1. Add the CHANGELOG entry and bump `package.json`.
-2. `npm run lint && npm run typecheck && npm run build && npm run test:coverage`
-3. Commit, then push a signed tag: `git tag -s vX.Y.Z -m "vX.Y.Z" && git push origin main vX.Y.Z`
+Releases are tag-driven. Bump `package.json`, move the `[Unreleased]` notes in
+`CHANGELOG.md` under the new version, commit, then:
+
+```sh
+git tag -s vX.Y.Z -m "vX.Y.Z"
+git push origin main vX.Y.Z
+```
+
+The release workflow publishes to npm via Trusted Publishing (OIDC, with
+provenance), pushes the multi-arch container image to GHCR, creates the GitHub
+release from the CHANGELOG section, and updates the entry in the official MCP
+registry.
 
 ## License
 
