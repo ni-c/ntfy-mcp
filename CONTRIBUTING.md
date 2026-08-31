@@ -61,7 +61,7 @@ number below one of them, write the missing test — do not lower the threshold.
   the pull request text.
 - **No new runtime dependencies** without a very good reason; the small tree is a
   feature.
-- Run `npm run lint` before pushing. It runs eslint (type-aware, so it needs the
+- Run `npm run lint` before pushing. It runs oxlint (type-aware, so it needs the
   `tsconfig.test.json` project) and prettier, which also validates the YAML, JSON and
   Markdown files.
 
