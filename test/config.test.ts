@@ -145,6 +145,22 @@ describe('loadConfig', () => {
     expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unencrypted/);
   });
 
+  it.each([
+    ['bracketed IPv6', 'http://[::1]:8080'],
+    ['IPv4-mapped IPv6', 'http://[::ffff:127.0.0.1]:8080'],
+    ['a fully qualified localhost', 'http://localhost.:8080'],
+  ])('stays quiet about plain http to loopback spelled as %s', (_, url) => {
+    // URL.hostname hands back '[::1]' with its brackets and normalises
+    // ::ffff:127.0.0.1 to '[::ffff:7f00:1]'. The comparison this replaced
+    // checked for a bare '::1' and so warned about every one of these.
+    const errors = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    loadConfig({ NTFY_URL: url });
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unencrypted/);
+    errors.mockRestore();
+  });
+
   it('warns about anonymous writes against the public instance', () => {
     // The one shape where the blast radius is genuinely unbounded: knowing a
     // topic name is the whole of the access control on ntfy.sh.
