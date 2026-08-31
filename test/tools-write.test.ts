@@ -440,11 +440,12 @@ describe('manage_user_access', () => {
 describe('the read-only mode', () => {
   it('does not register any write tool at all', async () => {
     const harness = await connect({ readOnly: true, topics: ['alerts'] });
-    const result = await harness.call('publish_message', { message: 'x' });
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain(
-      'Tool publish_message not found'
-    );
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      harness.call('publish_message', { message: 'x' })
+    ).rejects.toThrow('Tool publish_message not found');
     expect(harness.calls).toHaveLength(0);
   });
 });

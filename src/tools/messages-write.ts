@@ -1,13 +1,10 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import type { NtfyApi, NtfyMessage } from '../api.js';
 import {
   confirmationPrompt,
   setResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
 import {
   actionSchema,
   confirmTokenParam,
@@ -22,6 +19,9 @@ import {
   titleText,
   topicParam,
 } from '../schema.js';
+
+import type { NtfyApi, NtfyMessage } from '../api.js';
+import { errorResult, jsonResult, run, textResult } from '../result.js';
 
 const MAX_TOPICS = 10;
 const MAX_IDS = 25;
@@ -107,7 +107,7 @@ export function registerMessageWriteTools(
         'update_message to revise this notification in place, which is how a ' +
         'progress report stays one notification instead of five.',
       annotations: { readOnlyHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         topics: z
           .array(topicParam)
           .min(1)
@@ -142,7 +142,7 @@ export function registerMessageWriteTools(
           .boolean()
           .optional()
           .describe('Set false to skip forwarding via Firebase.'),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -216,7 +216,7 @@ export function registerMessageWriteTools(
         'revision as its own entry pointing back at the original, which is why ' +
         'list_messages shows them with an "updates" field.',
       annotations: { readOnlyHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         sequence_id: messageIdParam.describe(
           'Id of the notification to revise, as returned by publish_message.'
         ),
@@ -224,7 +224,7 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Its topic. Defaults to the first NTFY_TOPICS entry.'),
         ...contentSchema,
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -254,7 +254,7 @@ export function registerMessageWriteTools(
         "Clears notifications on subscribers' devices. The messages stay in " +
         'the server cache and remain readable with list_messages.',
       annotations: { readOnlyHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
           .min(1)
@@ -263,7 +263,7 @@ export function registerMessageWriteTools(
         topic: topicParam
           .optional()
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -294,7 +294,7 @@ export function registerMessageWriteTools(
         'delivered yet. Requires a confirmation token: call once without it to ' +
         'receive the token, then again with it.',
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
           .min(1)
@@ -304,7 +304,7 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
     },
     async (args) =>
       run(async () => {

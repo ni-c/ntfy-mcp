@@ -1,9 +1,5 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import { NtfyApiError, type NtfyApi } from '../api.js';
-import { buildEnvelope, MAX_RESULT_BYTES, toView } from '../messages.js';
-import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
 import {
   messageIdParam,
   priorityParam,
@@ -12,6 +8,10 @@ import {
   topicParam,
   usernameParam,
 } from '../schema.js';
+
+import { NtfyApiError, type NtfyApi } from '../api.js';
+import { buildEnvelope, MAX_RESULT_BYTES, toView } from '../messages.js';
+import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
 
 const MAX_TOPICS = 10;
 const DEFAULT_LIMIT = 50;
@@ -70,7 +70,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'full. Entries with an "updates" field revise an earlier notification ' +
         'rather than being new ones.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         topics: z
           .array(topicParam)
           .min(1)
@@ -129,7 +129,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .describe(
             `Most recent messages to return (default ${DEFAULT_LIMIT}).`
           ),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -165,14 +165,14 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'body, its action buttons and any attachment. Ids come from ' +
         'list_messages or from the result of publish_message.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         id: messageIdParam.describe('The 12-character message id.'),
         topic: topicParam
           .optional()
           .describe(
             'Topic to look in. Defaults to the first NTFY_TOPICS entry.'
           ),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -213,7 +213,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'is denied here and can still publish perfectly well — that ' +
         'combination is the single most common source of confusion with ntfy.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         topics: z
           .array(topicParam)
           .min(1)
@@ -222,7 +222,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .describe(
             'Topics to check. Defaults to the first NTFY_TOPICS entry.'
           ),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -268,7 +268,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'reported as such and does not fail the call. "version" needs an admin ' +
         'account, so its absence is normal.',
       annotations: { readOnlyHint: true },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () =>
       run(async () => {
@@ -336,7 +336,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'credentials. Access token values are redacted — only their labels and ' +
         'timestamps are shown.',
       annotations: { readOnlyHint: true },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () =>
       run(async () =>
@@ -357,7 +357,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'answer to "who can read or write topic X". Requires an admin ' +
         'account; get_server_info reports whether the current one qualifies.',
       annotations: { readOnlyHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         username: usernameParam
           .optional()
           .describe('Return only this account.'),
@@ -373,7 +373,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .max(MAX_USER_LIMIT)
           .optional()
           .describe(`Accounts to return (default ${DEFAULT_USER_LIMIT}).`),
-      },
+      }),
     },
     async (args) =>
       run(async () => {

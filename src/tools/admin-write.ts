@@ -1,19 +1,19 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import type { NtfyApi } from '../api.js';
 import {
   confirmationPrompt,
   setResourceKey,
   tupleResourceKey,
   type ConfirmationStore,
 } from '../confirm.js';
-import { jsonResult, run, textResult } from '../result.js';
 import {
   confirmTokenParam,
   topicPatternParam,
   usernameParam,
 } from '../schema.js';
+
+import type { NtfyApi } from '../api.js';
+import { jsonResult, run, textResult } from '../result.js';
 
 /**
  * The five unambiguous names this server exposes, mapped to the permission
@@ -73,7 +73,7 @@ export function registerAdminWriteTools(
         'conversation transcript. For an account that matters, create it on ' +
         'the server instead.',
       annotations: { readOnlyHint: false },
-      inputSchema: {
+      inputSchema: z.object({
         username: usernameParam.describe('The account name.'),
         password: z
           .string()
@@ -85,7 +85,7 @@ export function registerAdminWriteTools(
           .max(64)
           .optional()
           .describe('Tier name, on an instance that defines tiers.'),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -115,10 +115,10 @@ export function registerAdminWriteTools(
         'an admin account and a confirmation token: call once without it to ' +
         'receive the token, then again with it.',
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         username: usernameParam.describe('The account to remove.'),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
     },
     async (args) =>
       run(async () => {
@@ -154,7 +154,7 @@ export function registerAdminWriteTools(
         'wildcard grant — whereas "revoke" removes the rule entirely, so a ' +
         'broader wildcard or the server default applies again.',
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         username: usernameParam.describe('The account to change.'),
         topic: topicPatternParam.describe(
           'A topic name, or a prefix ending in "*".'
@@ -166,7 +166,7 @@ export function registerAdminWriteTools(
               'revoke (remove the rule).'
           ),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
     },
     async (args) =>
       run(async () => {

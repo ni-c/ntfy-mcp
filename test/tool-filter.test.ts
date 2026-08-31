@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import { createServer } from '../src/server.js';
-import { ToolFilterError } from '../src/tool-filter.js';
 import {
   ALL_TOOLS,
   ESSENTIAL_TOOLS,
   READ_TOOLS,
   WRITE_TOOLS,
 } from '../src/tools/catalogue.js';
+
+import { createServer } from '../src/server.js';
+import { ToolFilterError } from '../src/tool-filter.js';
 import { connect, stubFetch, testConfig, toolNames } from './harness.js';
 
 const config = testConfig;
@@ -130,15 +130,15 @@ describe('a filtered-out tool', () => {
     // This is the difference between removing the tool and disabling it: a
     // disabled tool still answers a call, which advertises a refusal.
     const harness = await connect({ allowTools: 'list_messages' });
-    const result = await harness.call('delete_messages', {
-      sequence_ids: ['aaaaaaaaaaaa'],
-      topic: 'alerts',
-    });
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain(
-      'Tool delete_messages not found'
-    );
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      harness.call('delete_messages', {
+        sequence_ids: ['aaaaaaaaaaaa'],
+        topic: 'alerts',
+      })
+    ).rejects.toThrow('Tool delete_messages not found');
     expect(harness.calls).toHaveLength(0);
   });
 });

@@ -49,11 +49,12 @@
     "assets:check": "node scripts/gen-assets.mjs --check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "undici": "^8.10.0",
     "zod": "^4.5.2"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^26.3.0",
     "@vitest/coverage-v8": "4.1.11",
