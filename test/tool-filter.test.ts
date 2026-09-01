@@ -245,10 +245,56 @@ describe('the tools themselves', () => {
       'delete_messages',
       'delete_user',
       'manage_user_access',
+      // Added with the annotation sweep: it replaces the fields of a message
+      // people have already received a copy of, and what was there does not
+      // come back.
+      'update_message',
     ]);
   });
 
-  it('require a confirm token on exactly the destructive tools', async () => {
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world. Four tools here said only
+    // `readOnlyHint: false`, which is that claim with a word in front of it.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+  });
+
+  it('does not call publishing destructive', async () => {
+    // The one that fits neither half of the rule. Sending a notification
+    // destroys nothing, and it reaches people who cannot un-receive it. That
+    // is an outbound effect, not a destructive one, and no annotation carries
+    // it — marking it destructive would put the warning on the wrong axis.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get('publish_message')?.destructiveHint).toBe(false);
+    expect(byName.get('create_user')?.destructiveHint).toBe(false);
+    expect(byName.get('mark_messages_read')?.destructiveHint).toBe(false);
+  });
+
+  it('require a confirm token on the three guarded tools', async () => {
+    // Deliberately a list rather than "wherever destructiveHint is true".
+    // Those are two different claims: the annotation says what a call does,
+    // the confirmation decides whether a person is asked first. update_message
+    // is destructive and not guarded — that is a gap worth seeing, not a
+    // reason to soften the annotation until the two agree.
+    const guarded = ['delete_messages', 'delete_user', 'manage_user_access'];
     const { client } = await connect();
     const { tools } = await client.listTools();
     for (const tool of tools) {
@@ -256,7 +302,7 @@ describe('the tools themselves', () => {
         tool.inputSchema as { properties?: Record<string, unknown> }
       ).properties;
       const gated = properties !== undefined && 'confirm_token' in properties;
-      expect(gated, tool.name).toBe(tool.annotations?.destructiveHint === true);
+      expect(gated, tool.name).toBe(guarded.includes(tool.name));
     }
   });
 

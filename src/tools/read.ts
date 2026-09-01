@@ -10,6 +10,7 @@ import {
 } from '../schema.js';
 
 import { NtfyApiError, type NtfyApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 import { buildEnvelope, MAX_RESULT_BYTES, toView } from '../messages.js';
 import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
 
@@ -69,7 +70,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'topic". Message bodies are shortened here; use get_message for one in ' +
         'full. Entries with an "updates" field revise an earlier notification ' +
         'rather than being new ones.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({
         topics: z
           .array(topicParam)
@@ -164,7 +165,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'Fetches a single cached message in full, including the untruncated ' +
         'body, its action buttons and any attachment. Ids come from ' +
         'list_messages or from the result of publish_message.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({
         id: messageIdParam.describe('The 12-character message id.'),
         topic: topicParam
@@ -212,7 +213,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'this endpoint tests the read side only. A write-only publishing token ' +
         'is denied here and can still publish perfectly well — that ' +
         'combination is the single most common source of confusion with ntfy.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({
         topics: z
           .array(topicParam)
@@ -267,7 +268,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'Each section is fetched independently; one that is unavailable is ' +
         'reported as such and does not fail the call. "version" needs an admin ' +
         'account, so its absence is normal.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({}),
     },
     async () =>
@@ -335,7 +336,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'Identity, role, tier, limits and current usage of the configured ' +
         'credentials. Access token values are redacted — only their labels and ' +
         'timestamps are shown.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({}),
     },
     async () =>
@@ -356,7 +357,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'Every account on the instance with its per-topic grants — the ' +
         'answer to "who can read or write topic X". Requires an admin ' +
         'account; get_server_info reports whether the current one qualifies.',
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
       inputSchema: z.object({
         username: usernameParam
           .optional()

@@ -71,7 +71,15 @@ export function registerAdminWriteTools(
         'Be aware that a password passed as a tool argument stays in the ' +
         'conversation transcript. For an account that matters, create it on ' +
         'the server instead.',
-      annotations: { readOnlyHint: false },
+      annotations: {
+        // Additive: it brings an account into existence. A privilege change
+        // rather than a destruction — which is why it is guarded, not why it
+        // would be destructive.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         username: usernameParam.describe('The account name.'),
         password: z
@@ -113,7 +121,15 @@ export function registerAdminWriteTools(
         'Removes an account and every access grant attached to it. Requires ' +
         'an admin account and a confirmation token: call once without it to ' +
         'receive the token, then again with it.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Idempotent by the specification's wording — the second call fails,
+        // but the world is the same either way. Every access grant attached
+        // to the account goes with it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         username: usernameParam.describe('The account to remove.'),
         confirm_token: confirmTokenParam.optional(),
@@ -163,7 +179,14 @@ export function registerAdminWriteTools(
         'an explicit refusal — the only way to carve an exception out of a ' +
         'wildcard grant — whereas "revoke" removes the rule entirely, so a ' +
         'broader wildcard or the server default applies again.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Replaces the rule for a user on a topic, and revoking takes access
+        // away with no record of what it was.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         username: usernameParam.describe('The account to change.'),
         topic: topicPatternParam.describe(

@@ -104,7 +104,15 @@ export function registerMessageWriteTools(
         "The returned id is also the notification's sequence id: pass it to " +
         'update_message to revise this notification in place, which is how a ' +
         'progress report stays one notification instead of five.',
-      annotations: { readOnlyHint: false },
+      annotations: {
+        // Destroys nothing, and reaches people who cannot un-receive it.
+        // That is an outbound effect, not a destructive one, and no annotation
+        // carries it — the description does. Each call sends again.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         topics: z
           .array(topicParam)
@@ -213,7 +221,14 @@ export function registerMessageWriteTools(
         'updated. Only the fields given are sent; the cache keeps each ' +
         'revision as its own entry pointing back at the original, which is why ' +
         'list_messages shows them with an "updates" field.',
-      annotations: { readOnlyHint: false },
+      annotations: {
+        // Replaces the fields of a message somebody already received a copy
+        // of. What was there is not recoverable.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         sequence_id: messageIdParam.describe(
           'Id of the notification to revise, as returned by publish_message.'
@@ -251,7 +266,13 @@ export function registerMessageWriteTools(
       description:
         "Clears notifications on subscribers' devices. The messages stay in " +
         'the server cache and remain readable with list_messages.',
-      annotations: { readOnlyHint: false },
+      annotations: {
+        // A marker, and ntfy keeps the message either way.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
@@ -291,7 +312,14 @@ export function registerMessageWriteTools(
         'Deletes notifications and cancels scheduled ones that have not been ' +
         'delivered yet. Requires a confirmation token: call once without it to ' +
         'receive the token, then again with it.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Deleted notifications do not come back, and scheduled ones are not
+        // sent. Idempotent: deleting the same ids twice leaves the same topic.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
