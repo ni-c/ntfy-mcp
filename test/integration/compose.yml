@@ -1,0 +1,63 @@
+# Throwaway ntfy server for `npm run test:integration`.
+#
+# Not a managed stack: brought up, driven by the suite, destroyed with
+# `down -v` afterwards. The suite calls every tool in the catalogue —
+# publishing, deleting and rewriting the authorization model included — so
+# nothing here may be an instance anybody's phone is subscribed to.
+#
+# Bound to 127.0.0.1 only. The credentials below are in version control on
+# purpose; an instance reachable from the network with them would be a mistake
+# the binding is there to prevent.
+services:
+  ntfy:
+    # Overridable so the weekly CI run can point at :latest and report drift
+    # without changing what the PR gate tests.
+    #
+    # 2.19.2 rather than something older: updating and deleting notifications
+    # arrived in **2.16.0**, and against 2.14.0 the three tools that use them
+    # do not fail loudly — `delete_messages` and `mark_messages_read` report
+    # `ok: false` per id inside a successful result, and `update_message`
+    # quietly publishes a second notification instead of revising the first.
+    image: ${NTFY_IMAGE:-binwiederhier/ntfy:v2.19.2}
+    # ntfy has no HTTP endpoint that creates the first admin — `ntfy user add`
+    # is a CLI command against the same user database the server reads. Doing
+    # it here rather than with `docker compose exec` from the test keeps the
+    # bootstrap free of the docker CLI, and keeps "how this instance came to
+    # exist" in one file.
+    #
+    # The server has to start *first*: `ntfy user add` refuses with "auth-file
+    # does not exist; please start the server at least once to create it". So
+    # the server is started in the background, the database is waited for, and
+    # the user is added against the running instance — which needs no restart,
+    # because ntfy reads accounts from SQLite per request.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        set -e
+        ntfy serve &
+        server=$$!
+        while [ ! -f /var/lib/ntfy/user.db ]; do sleep 0.2; done
+        NTFY_PASSWORD=integration-not-a-secret \
+          ntfy user add --role=admin integration
+        wait $$server
+    environment:
+      NTFY_BASE_URL: http://127.0.0.1:8099
+      NTFY_LISTEN_HTTP: ':80'
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      # Without this every topic is world-readable and world-writable, and
+      # check_topic_access answers "yes" for an account with no grants at all.
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      # Messages are only addressable by sequence id while they are cached, so
+      # update_message, mark_messages_read and delete_messages need this.
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_ENABLE_SIGNUP: 'false'
+    tmpfs:
+      # The user and message databases live for the length of one run.
+      - /var/lib/ntfy
+    ports:
+      - '127.0.0.1:8099:80'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/v1/health || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 30

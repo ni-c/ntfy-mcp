@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { connect } from './harness.js';
+import { connect, tokenOf } from './harness.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -295,10 +295,7 @@ describe('delete_messages', () => {
     const first = await harness.call('delete_messages', {
       sequence_ids: ['aaaaaaaaaaaa'],
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
-    expect(token).toBeDefined();
+    const token = tokenOf(harness.text(first));
 
     const second = await harness.call('delete_messages', {
       sequence_ids: ['aaaaaaaaaaaa'],
@@ -326,9 +323,7 @@ describe('delete_messages', () => {
     const first = await harness.call('delete_messages', {
       sequence_ids: ['aaaaaaaaaaaa'],
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
 
     const wider = await harness.call('delete_messages', {
       sequence_ids: ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'],
@@ -391,8 +386,7 @@ describe('create_user', () => {
       password: 'correct-horse',
     });
     expect(harness.text(first)).not.toContain('correct-horse');
-    const token = /confirm_token="([a-f0-9]+)"/.exec(harness.text(first))?.[1];
-    expect(token).toBeDefined();
+    const token = tokenOf(harness.text(first));
     const done = await harness.call('create_user', {
       username: 'publisher',
       password: 'correct-horse',
@@ -417,9 +411,7 @@ describe('delete_user', () => {
   it('is gated by a confirmation bound to the username', async () => {
     const harness = await connect({}, () => ({}));
     const first = await harness.call('delete_user', { username: 'alice' });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
     expect(harness.calls).toHaveLength(0);
 
     const wrongTarget = await harness.call('delete_user', {
@@ -452,9 +444,7 @@ describe('manage_user_access', () => {
       topic: 'deploy*',
       action: 'write_only',
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
     await harness.call('manage_user_access', {
       username: 'publisher',
       topic: 'deploy*',
@@ -478,9 +468,7 @@ describe('manage_user_access', () => {
       topic: 'alerts',
       action: 'revoke',
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
     await harness.call('manage_user_access', {
       username: 'publisher',
       topic: 'alerts',
@@ -500,9 +488,7 @@ describe('manage_user_access', () => {
       topic: 'alerts',
       action: 'revoke',
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
     const swapped = await harness.call('manage_user_access', {
       username: 'publisher',
       topic: 'alerts',
@@ -527,9 +513,7 @@ describe('manage_user_access', () => {
       topic: 'deploy',
       action: 'read_only',
     });
-    const token = /confirm_token="([a-f0-9]{32})"/.exec(
-      harness.text(first)
-    )?.[1];
+    const token = tokenOf(harness.text(first));
     const swapped = await harness.call('manage_user_access', {
       username: 'deploy',
       topic: 'alice',
