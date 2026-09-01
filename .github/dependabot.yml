@@ -4,15 +4,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    ignore:
-      # typescript-eslint peers "typescript >=4.8.4 <6.1.0", so TypeScript 7 cannot
-      # be installed here — npm aborts with ERESOLVE. Dependabot keeps offering it
-      # anyway, and its attempt does not fail alone: resolving the peer dies with
-      # dependency_file_not_resolvable, which aborts the WHOLE npm run, so every
-      # other update that week is silently dropped too. That is what happened on
-      # 2026-08-27. Drop this entry once typescript-eslint widens the range.
-      - dependency-name: typescript
-        update-types: ['version-update:semver-major']
     groups:
       # Lockstep packages: bumped separately they arrive as individually broken PRs.
       vitest:
@@ -24,12 +15,12 @@ updates:
           - eslint
           - '@eslint/*'
           - typescript-eslint
-      # Dependabot is documented to put a dependency in the first group it matches,
-      # but a pattern-less catch-all claims it anyway (dependabot-core#9765). Without
-      # these exclusions @vitest/coverage-v8 lands here while vitest goes to the group
-      # above, and the half-updated lockfile leaves an unsatisfiable peer edge — npm ci
-      # then dies with "Cannot read properties of null (reading 'edgesOut')", naming
-      # neither the package nor the cause. Keep this list in sync with the groups above.
+      # The catch-all has to repeat the patterns above as exclude-patterns.
+      # Dependabot documents the first matching group as the winner and does not
+      # behave that way (dependabot-core#9765, #14143): on 2026-08-27 it put
+      # `vitest` in the vitest group and `@vitest/coverage-v8` in this one, and
+      # the resulting half-update leaves a lockfile whose `npm ci` dies with
+      # "Cannot read properties of null (reading 'edgesOut')".
       minor-and-patch:
         exclude-patterns:
           - vitest
@@ -40,6 +31,14 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # typescript-eslint declares `typescript ">=4.8.4 <6.1.0"` as its peer, so
+      # TypeScript 7 does not install here at all — `npm install` aborts with
+      # ERESOLVE. Offering the major would be a weekly PR that can only be closed.
+      # Revisit when typescript-eslint widens the range.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
 
   # The documentation site has its own manifest so its toolchain never lands in the
   # runtime image or the test matrix.
@@ -52,13 +51,30 @@ updates:
         patterns:
           - '*'
 
+  # Exists so the digest-pinned base image gets refreshed at all. Node majors are
+  # excluded because Dependabot offers whatever tag is newest, while the runtime
+  # image has to sit on an ACTIVE LTS line — and roughly half of all Node majors
+  # never become LTS. Crossing an LTS boundary is a decision, not an update.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
-      # init and analyze are separate dependencies to Dependabot but must always
-      # move together — a version mismatch kills the codeql job.
+      # init and analyze are separate dependencies to Dependabot. Ungrouped,
+      # one of them bumps first and the version mismatch fails the CodeQL job.
       codeql:
         patterns:
           - github/codeql-action*
+      # The docker/* actions are released in lockstep and used in one job.
+      docker:
+        patterns:
+          - docker/*
