@@ -44,21 +44,42 @@ not help there, because publishing is not a destructive operation. `NTFY_TOPICS`
 the control that does, and an ntfy account scoped to those topics is the control
 behind it.
 
-## Confirmation tokens
+## The confirmation, honestly
 
-`delete_messages`, `delete_user` and `manage_user_access` are refused on the first
-call and answered with a short-lived, single-use token bound to a fingerprint of the
-**exact** target. Only a second call carrying that token performs the operation.
+Four tools **ask a person** before they act: `delete_messages`, `delete_user`,
+`manage_user_access` and `create_user`.
 
-The binding is what makes it worth having. A confirmation issued for one target
-cannot execute another, cannot execute a longer list of message ids the model chose
-afterwards, and — for `manage_user_access`, whose three arguments overlap in
-vocabulary — cannot execute the same three values in a different order. A model
-cannot mint a token either: it only ever exists in a previous result from this
-server, so an instruction hidden in a notification cannot satisfy the gate.
+Where the MCP client supports elicitation, the question is a **dialog** shown to
+whoever is sitting there. The model cannot answer it on their behalf, and nothing
+happens until an answer comes back.
+
+`create_user` is the odd one on that list, because it destroys nothing. It is the
+mirror image of `delete_user`: bringing an account into existence is a change to who
+may reach this instance, and no annotation carries that — `destructiveHint` is about
+what a call takes away.
+
+Where the client cannot show a dialog, the tool falls back to a short-lived,
+single-use token. Be clear about what that proves, because this server is: **the
+call was made twice with the same arguments, and nothing more.** A model can read
+the token out of the first result and quote it back in the same turn. The fallback
+text says so rather than implying somebody approved, and names whether it was the
+client that could not be asked or the operator who switched the dialog off with
+`ELICITATION=false`.
+
+Either way the approval is bound to a fingerprint of the **exact** target. One
+issued for one target cannot execute another, cannot execute a longer list of
+message ids the model chose afterwards, and — for `manage_user_access`, whose three
+arguments overlap in vocabulary — cannot execute the same three values in a
+different order.
 
 Confirmation prompts never quote content that came from ntfy. They name the topic,
 the count or the username and nothing else, because that text is read by a model.
+`create_user`'s prompt also leaves out the **password**: it is a live credential,
+and the prompt is read back both by a person and by a model, so it is in neither
+the text nor the token's binding.
+
+See [Asking a person](/guide/approval) for what the dialog contains, which clients
+show one, and what `ELICITATION=false` does and does not change.
 
 ## Untrusted content
 

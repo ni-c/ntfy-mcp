@@ -64,7 +64,10 @@ export function createServer(config: Config): McpServer {
   const confirmations = new ConfirmationStore();
   // One approver per server: it holds the key that seals the request state
   // carried out through the client and back.
-  const approval = createApproval({ server: 'ntfy-mcp' });
+  const approval = createApproval({
+    server: 'ntfy-mcp',
+    elicitation: config.elicitation,
+  });
 
   const server = new McpServer(
     {

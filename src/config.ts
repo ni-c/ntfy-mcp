@@ -34,6 +34,14 @@ export interface Config {
   insecureTls: boolean;
   readOnly: boolean;
   /**
+   * Whether a client that *can* show a dialog is asked before a guarded tool
+   * acts. `ELICITATION=false` turns the dialog off — the guard stays and falls
+   * back to the two-call token, so there is no setting in which a guarded call
+   * goes unannounced.
+   */
+  elicitation: boolean;
+
+  /**
    * Raw value of `NTFY_ALLOW_TOOLS` — comma-separated tool names, `list_*`
    * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror of
    * the environment, and the names can only be checked against the tool
@@ -72,6 +80,30 @@ export function missingConfigKeys(config: Config): string[] {
 const TOPIC_PATTERN = /^[-_A-Za-z0-9]{1,64}$/;
 
 /**
+ * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
+ * anything it does not recognise.
+ *
+ * Unprefixed: environment variables are process-wide, so this is one switch for
+ * every server in the same environment. That is also its risk, which is why a
+ * server started with it off says so on its startup line.
+ *
+ * Fatal: this is the first variable of the family that defaults to *on*. The
+ * others fail open on a typo, which is the safe direction for them. Here a typo
+ * would leave the dialog running while the operator believes it is off — and an
+ * operator who believes that has no way to find out.
+ */
+export function parseElicitation(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(
+    `ntfy-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+      'Refusing to start rather than guess.'
+  );
+  process.exit(1);
+}
+
+/**
  * Reads the configuration from environment variables.
  *
  * A missing URL is only a warning, not a fatal error: the server must be able to
@@ -98,6 +130,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // environment is visible to child processes and in /proc/<pid>/environ.
   delete env.NTFY_TOKEN;
   delete env.NTFY_PASSWORD;
+
+  // After the delete, deliberately: this one can exit the process, and an exit
+  // above would leave the credential in the environment for whatever runs next.
+  const elicitation = parseElicitation(env.ELICITATION);
 
   if (token && (username || password)) {
     // Not a precedence rule. Which credential is in force must never be
@@ -133,6 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       topics,
       insecureTls,
       readOnly,
+      elicitation,
       allowTools,
       denyTools,
     };
@@ -189,6 +226,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     topics,
     insecureTls,
     readOnly,
+    elicitation,
     allowTools,
     denyTools,
   };

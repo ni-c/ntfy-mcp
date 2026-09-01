@@ -47,7 +47,20 @@ Treat every environment variable this server reads as a secret. The MCP client
 process, and therefore the model driving it, sees every tool result — do not point
 this server at a system whose data you would not put in a model's context.
 
-Destructive operations require a server-generated confirmation token that is bound to
-the specific target; a model cannot satisfy that gate on its own. Data returned from
-the upstream API is untrusted input: it is marked as such, and confirmation prompts
-never quote it.
+Four operations **ask a person** through MCP elicitation: `delete_messages`,
+`delete_user`, `manage_user_access` and `create_user`. That is a dialog raised by the
+server and shown by the client, which the model cannot answer on its behalf; nothing
+happens until an answer comes back, and the approval is bound to a fingerprint of the
+exact target.
+
+Where the client cannot show a dialog they fall back to a server-generated token
+bound the same way. That fallback is weaker and this server says so rather than
+implying somebody approved: it proves the call was made twice with the same
+arguments, and nothing more. `ELICITATION=false` moves a capable client onto it
+deliberately — it does not remove the guard, and the server prints one line at
+startup saying it is off.
+
+Data returned from the upstream API is untrusted input: it is marked as such, and
+confirmation prompts never quote it — nor the password `create_user` was given,
+which is a live credential and belongs neither in the prompt nor in the token's
+binding.

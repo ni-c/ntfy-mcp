@@ -13,6 +13,60 @@ function catchExit(): void {
   });
 }
 
+describe('ELICITATION', () => {
+  const base = { NTFY_URL: 'https://ntfy.example.net' };
+
+  it('defaults to on, and to on for an empty value', () => {
+    // The only variable of this family that defaults to *on*. An unset switch
+    // has to mean "ask", or a deployment that never heard of it would quietly
+    // stop asking.
+    expect(loadConfig({ ...base }).elicitation).toBe(true);
+    expect(loadConfig({ ...base, ELICITATION: '' }).elicitation).toBe(true);
+  });
+
+  it('is switched off by "false", in any casing or padding', () => {
+    for (const raw of ['false', 'FALSE', ' False ']) {
+      expect(loadConfig({ ...base, ELICITATION: raw }).elicitation, raw).toBe(
+        false
+      );
+    }
+  });
+
+  it('refuses to start on anything else, naming both valid values', () => {
+    // Deliberately fatal rather than falling back to the default: a typo would
+    // leave the dialog running while the operator believes it is off, and
+    // nothing else would ever tell them.
+    for (const raw of ['1', 'off', 'no']) {
+      const error = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+      catchExit();
+      expect(() => loadConfig({ ...base, ELICITATION: raw })).toThrow('exited');
+      const message = String(error.mock.calls[0]?.[0] ?? '');
+      expect(message, raw).toContain('ELICITATION');
+      expect(message, raw).toContain('"true"');
+      expect(message, raw).toContain('"false"');
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('has already wiped the credentials by the time it can exit', () => {
+    // parseElicitation sits *after* the delete on purpose. An exit above it
+    // would leave the secret in the environment for whatever a crash reporter
+    // or an inspector does next — which is exactly what that delete exists to
+    // prevent, and its comment says so.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    catchExit();
+    const env = {
+      ...base,
+      NTFY_TOKEN: 'tk_secret',
+      ELICITATION: 'nonsense',
+    };
+    expect(() => loadConfig(env)).toThrow('exited');
+    expect(env.NTFY_TOKEN).toBeUndefined();
+  });
+});
+
 describe('loadConfig', () => {
   it('starts without any configuration so tools stay listable', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

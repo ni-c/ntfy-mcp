@@ -30,7 +30,7 @@ features:
   - title: 'Only the tools you want'
     details: 'NTFY_READ_ONLY=true registers the read tools and nothing else. NTFY_ALLOW_TOOLS cuts finer — essential for a curated six, your own comma-separated list, or a whole family with list_* — and NTFY_DENY_TOOLS subtracts. Whatever is filtered out does not exist on the protocol rather than failing when called, and a name that matches no tool stops the server at startup instead of quietly going missing.'
   - title: 'Careful with what it hands back'
-    details: 'Deleting anything needs a server-issued confirmation token bound to the exact target, notification content is marked as untrusted data, access tokens are stripped out of get_account, and a click or action URL must be http or https because the recipient device is what opens it.'
+    details: 'Deleting anything, and creating or re-scoping an account, asks a person first through MCP elicitation — a dialog the model cannot answer on its behalf, falling back to a token bound to the exact target where the client cannot show one. Notification content is marked as untrusted data, access tokens are stripped out of get_account, and a click or action URL must be http or https because the recipient device is what opens it.'
 ---
 
 <figure class="diagram">
@@ -56,7 +56,7 @@ features:
   <text class="label-title" x="375" y="87" text-anchor="middle">ntfy-mcp</text>
   <text class="label-muted" x="375" y="107" text-anchor="middle">13 tools</text>
   <text class="label-muted" x="375" y="125" text-anchor="middle">topic allow-list</text>
-  <text class="label-muted" x="375" y="143" text-anchor="middle">confirm tokens</text>
+  <text class="label-muted" x="375" y="143" text-anchor="middle">asks a person</text>
 
   <rect class="node" x="610" y="70" width="150" height="80" rx="10" />
   <text class="label-title" x="685" y="103" text-anchor="middle">ntfy</text>
@@ -76,7 +76,7 @@ features:
   <text class="label-muted" x="685" y="232" text-anchor="middle">update_message revises it in place</text>
 </svg>
 <!-- ARCHITECTURE:END -->
-<figcaption>One stdio server between the MCP client and ntfy — publishes over HTTPS and polls the message cache over the same API, bounded by the topic allow-list, with destructive calls gated by confirmation tokens.</figcaption>
+<figcaption>One stdio server between the MCP client and ntfy — publishes over HTTPS and polls the message cache over the same API, bounded by the topic allow-list, with destructive calls put to a person first.</figcaption>
 </figure>
 
 ## See it in action

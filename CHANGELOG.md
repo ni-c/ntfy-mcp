@@ -21,6 +21,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing that works today stops working — but where a person can be asked, one
   is, instead of a token that only proves the same call was made twice.
 
+- **`create_user` now asks too.** It destroys nothing, which is why it was not
+  guarded and why `destructiveHint` cannot say what is wrong with it: bringing an
+  account into existence is a change to who may reach this instance. It is the
+  mirror image of `delete_user`, which was guarded from the start, and its own
+  annotation had claimed "which is why it is guarded" while it was not.
+
+  The **password stays out of it** — out of the prompt, which is read back by a
+  person and by a model, and out of the token's binding. A consequence worth
+  knowing: on the fallback path a token issued for one password works with
+  another, because what the approval is about is the account name.
+
+  Publishing deliberately stays unguarded. Sending a notification destroys
+  nothing and reaches people who cannot un-receive it — an outbound effect, not a
+  destructive one. `NTFY_TOPICS` is the control for that.
+
+- `ELICITATION` switches the dialog off — `false` sends a client that could have
+  been asked down the two-call-token path instead. For a scheduled job or a test
+  harness, where a dialog is the wrong shape rather than an unwanted one.
+
+  It does **not** remove the guard: there is no setting in which a guarded call
+  goes unannounced. Two deliberate rough edges come with it. The variable is
+  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
+  the environment — which is why a server started with it off prints a line
+  saying so, and why the fallback text names the server instead of blaming a
+  client that was working fine. And a value that is neither `true` nor `false`
+  **stops the server**: it is the only variable here that defaults to _on_, so
+  failing open on a typo would leave the dialog running while the operator
+  believed it was off. It is read after `NTFY_TOKEN` and `NTFY_PASSWORD` are
+  wiped from the environment, so that exit cannot leave a credential behind.
+
+- A `docs/guide/approval.md` page.
+
 ### Changed
 
 - Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they

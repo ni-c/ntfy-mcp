@@ -68,6 +68,8 @@ export function registerAdminWriteTools(
         'new account can reach nothing until you do.\n\n' +
         'The API cannot create administrators; only the ntfy CLI can ' +
         '(`ntfy user add --role=admin`).\n\n' +
+        'Asks a person first; where the client cannot show a dialog, call once ' +
+        'to receive a token and again with it.\n\n' +
         'Be aware that a password passed as a tool argument stays in the ' +
         'conversation transcript. For an account that matters, create it on ' +
         'the server instead.',
@@ -92,10 +94,43 @@ export function registerAdminWriteTools(
           .max(64)
           .optional()
           .describe('Tier name, on an instance that defines tiers.'),
+        confirm_token: confirmTokenParam.optional(),
       }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
+        // The mirror image of delete_user, which is guarded: bringing an
+        // account into existence is a change to who may reach this instance,
+        // and the annotation cannot say that — destructiveHint is about what a
+        // call takes away, and this takes nothing away.
+        //
+        // The password is in neither the key nor the text. It is a live
+        // credential and both of those are read back: the key would put it in
+        // the fallback token's binding, and the text in front of a person and
+        // a model.
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `create the account "${args.username}"`,
+            consequence:
+              'It becomes an account on this instance. Nothing is reachable ' +
+              'through it until manage_user_access grants a topic — but ' +
+              'whoever has the password can then authenticate as it.',
+            resourceKey: setResourceKey('create_user', [args.username]),
+            token: args.confirm_token,
+            toolName: 'create_user',
+            title: `Create the account "${args.username}"?`,
+            hint: 'Tick to create it, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. create_user did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+
         const body: Record<string, unknown> = {
           username: args.username,
           password: args.password,

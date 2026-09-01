@@ -344,7 +344,7 @@ describe('delete_messages', () => {
 
 describe('create_user', () => {
   it('does not echo the password back', async () => {
-    const harness = await connect({}, () => ({}));
+    const harness = await connect({}, () => ({}), 'accept');
     const result = await harness.call('create_user', {
       username: 'publisher',
       password: 'correct-horse',
@@ -355,8 +355,55 @@ describe('create_user', () => {
     expect(text).toContain('no topic access yet');
   });
 
-  it('rejects a short password before sending it anywhere', async () => {
+  it('asks before it brings an account into existence', async () => {
+    // The mirror image of delete_user, which was guarded from the start.
+    // Creating an account is a change to who may reach this instance, and no
+    // annotation carries that — destructiveHint is about what a call takes
+    // away, and this takes nothing away.
+    const harness = await connect({}, () => ({}), 'decline');
+    const result = await harness.call('create_user', {
+      username: 'publisher',
+      password: 'correct-horse',
+    });
+    expect(harness.prompts).toHaveLength(1);
+    expect(result.isError).toBe(true);
+    expect(harness.calls).toHaveLength(0);
+  });
+
+  it('keeps the password out of the prompt and out of the token binding', async () => {
+    // It is a live credential, and both of those are read back: the key would
+    // put it in the fallback token's binding, the text in front of a person and
+    // a model.
+    const asked = await connect({}, () => ({}), 'decline');
+    await asked.call('create_user', {
+      username: 'publisher',
+      password: 'correct-horse',
+    });
+    expect(asked.prompts[0]).not.toContain('correct-horse');
+    expect(asked.prompts[0]).toContain('publisher');
+
+    // And on the fallback path a token issued for one password works with
+    // another, precisely because the password is not part of the key. What the
+    // approval is about is the account name.
     const harness = await connect({}, () => ({}));
+    const first = await harness.call('create_user', {
+      username: 'publisher',
+      password: 'correct-horse',
+    });
+    expect(harness.text(first)).not.toContain('correct-horse');
+    const token = /confirm_token="([a-f0-9]+)"/.exec(harness.text(first))?.[1];
+    expect(token).toBeDefined();
+    const done = await harness.call('create_user', {
+      username: 'publisher',
+      password: 'correct-horse',
+      confirm_token: token,
+    });
+    expect(done.isError).toBeFalsy();
+    expect(harness.calls).toHaveLength(1);
+  });
+
+  it('rejects a short password before sending it anywhere', async () => {
+    const harness = await connect({}, () => ({}), 'accept');
     const result = await harness.call('create_user', {
       username: 'publisher',
       password: 'short',

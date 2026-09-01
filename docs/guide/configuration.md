@@ -103,8 +103,21 @@ follow from that direction:
   or `=1` leaves them enabled. Because the default is permissive, a typo fails
   **open** here, where in imap-mcp it fails closed.
 - **A client that can publish can publish anywhere on the instance** unless you say
-  otherwise. Confirmation tokens do not help against that — publishing is not a
-  destructive operation. `NTFY_TOPICS` is the control that does.
+  otherwise. The approval dialog does not help against that — publishing is not a
+  destructive operation, and a dialog before every notification would be how people
+  learn to tick without reading. `NTFY_TOPICS` is the control that does.
+
+## Turning the approval dialog off
+
+`delete_messages`, `delete_user`, `manage_user_access` and `create_user` ask a
+person through MCP elicitation before they act. `ELICITATION=false` takes them to
+the two-call token instead. It does not remove the guard; there is no setting in
+which a guarded call goes unannounced.
+
+The variable deliberately carries no `NTFY_` prefix, which means it reaches every
+MCP server in the same environment, and — unlike the booleans above — a value it
+does not recognise **stops the server** rather than failing open. See
+[Asking a person](/guide/approval).
 
 The recommended shape for anything unattended:
 

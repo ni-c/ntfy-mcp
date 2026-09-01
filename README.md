@@ -170,21 +170,24 @@ docker run -i --rm \
 
 `*` marks the `essential` preset.
 
-| Tool                   | Description                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| `list_messages` *      | Poll the cached messages of one or more topics, with filters, and get a cursor for the next call |
-| `get_message` *        | One message in full, including its action buttons and attachment                                 |
-| `check_topic_access` * | Whether the credentials may subscribe to a topic — see the note below                            |
-| `get_server_info` *    | Health, capabilities, usage, and whether the admin tools are worth trying                        |
-| `get_account`          | Identity, role, limits and usage of the configured credentials                                   |
-| `list_users`           | Every account and its per-topic grants (admin)                                                   |
-| `publish_message` *    | Send a notification to one or more topics                                                        |
-| `update_message` *     | Revise a notification in place, so a progress report stays one notification                      |
-| `mark_messages_read`   | Clear notifications on subscribers' devices                                                      |
-| `delete_messages`      | Delete notifications and cancel scheduled ones (confirmation required)                           |
-| `create_user`          | Create a non-admin account (admin)                                                               |
-| `delete_user`          | Remove an account and its grants (admin, confirmation required)                                  |
-| `manage_user_access`   | Grant, deny or revoke access to a topic or pattern (admin, confirmation required)                |
+| Tool                    | Description                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `list_messages` *       | Poll the cached messages of one or more topics, with filters, and get a cursor for the next call |
+| `get_message` *         | One message in full, including its action buttons and attachment                                 |
+| `check_topic_access` *  | Whether the credentials may subscribe to a topic — see the note below                            |
+| `get_server_info` *     | Health, capabilities, usage, and whether the admin tools are worth trying                        |
+| `get_account`           | Identity, role, limits and usage of the configured credentials                                   |
+| `list_users`            | Every account and its per-topic grants (admin)                                                   |
+| `publish_message` *     | Send a notification to one or more topics                                                        |
+| `update_message` *      | Revise a notification in place, so a progress report stays one notification                      |
+| `mark_messages_read`    | Clear notifications on subscribers' devices                                                      |
+| `delete_messages` 👤    | Delete notifications and cancel scheduled ones                                                   |
+| `create_user` 👤        | Create a non-admin account (admin)                                                               |
+| `delete_user` 👤        | Remove an account and its grants (admin)                                                         |
+| `manage_user_access` 👤 | Grant, deny or revoke access to a topic or pattern (admin)                                       |
+
+👤 asks a person through MCP elicitation · falls back to a two-call
+`confirm_token` where the client cannot show a dialog.
 
 ### Two things about ntfy that surprise people
 
@@ -215,13 +218,18 @@ existing ones show up.
 
 ## Safety
 
-- **Destructive tools are two-step.** `delete_messages`, `delete_user` and
-  `manage_user_access` return a short-lived confirmation token bound to a fingerprint
-  of the exact target; only a second call carrying that token performs the operation.
-  A confirmation for one target cannot execute another, a longer list, or — for
-  `manage_user_access` — the same three arguments in a different order.
+- **A person is asked, not just told.** Where the client supports MCP elicitation,
+  `delete_messages`, `delete_user`, `manage_user_access` and `create_user` raise a
+  real dialog that the model cannot answer on its behalf. Where it does not, they
+  fall back to a short-lived token bound to a fingerprint of the exact target — and
+  say so, rather than implying somebody approved. A confirmation for one target
+  cannot execute another, a longer list, or — for `manage_user_access` — the same
+  three arguments in a different order. See
+  [Asking a person](https://ntfy-mcp.ni-c.de/guide/approval).
 - **Confirmation prompts never quote content from ntfy.** They name the topic, the
-  count or the username and nothing else, because that text is read by a model.
+  count or the username and nothing else, because that text is read by a model. And
+  never the password `create_user` was given: it is a live credential, so it is in
+  neither the prompt nor the token's binding.
 - **Returned content is marked as untrusted data**, because it is: everything in a
   notification was written by whoever could publish to the topic.
 - **Access tokens are stripped from `get_account`.** ntfy returns every token of the

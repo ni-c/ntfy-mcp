@@ -8,10 +8,16 @@ Beyond that, `NTFY_ALLOW_TOOLS` and `NTFY_DENY_TOOLS` narrow the list, and
 `NTFY_ALLOW_TOOLS=essential` selects the six marked **essential** below — see
 [choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
 
-Three tools require a **confirmation token**: `delete_messages`, `delete_user` and
-`manage_user_access`. Each is refused on the first call and answered with a
-short-lived, single-use token bound to the exact target; a second call carrying that
-token performs the operation. See [Security](/guide/security#confirmation-tokens).
+Four tools marked 👤 **ask a person** before they act: `delete_messages`,
+`delete_user`, `manage_user_access` and `create_user`. Where the MCP client supports
+elicitation that is a dialog the model cannot answer on its behalf; where it does
+not, the tool falls back to a short-lived, single-use `confirm_token` bound to the
+exact target. `ELICITATION=false` takes that fallback deliberately. See
+[Asking a person](/guide/approval).
+
+Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`. `openWorldHint` is `false` throughout: this server
+talks to the one ntfy instance it is configured for.
 
 Every tool that takes a topic falls back to the first entry of `NTFY_TOPICS` when it
 is omitted, and refuses a topic outside that list when it is set.
@@ -29,10 +35,10 @@ is omitted, and refuses a topic outside that list when it is set.
 | `publish_message`      | write | **essential** |                                              |
 | `update_message`       | write | **essential** |                                              |
 | `mark_messages_read`   | write | —             |                                              |
-| `delete_messages`      | write | —             | confirmation token                           |
-| `create_user`          | write | —             | admin                                        |
-| `delete_user`          | write | —             | admin, confirmation token                    |
-| `manage_user_access`   | write | —             | admin, confirmation token                    |
+| `delete_messages` 👤   | write | —             | asks a person                                |
+| `create_user` 👤       | write | —             | admin, asks a person                         |
+| `delete_user` 👤       | write | —             | admin, asks a person                         |
+| `manage_user_access` 👤 | write | —             | admin, asks a person                         |
 
 ## Read tools
 
@@ -227,9 +233,9 @@ and remain readable with `list_messages`.
 
 Each id is reported separately, so one failure does not hide the successes.
 
-### delete_messages
+### delete_messages 👤
 
-**Confirmation token required.** Deletes notifications and cancels scheduled ones
+**Asks a person first.** Deletes notifications and cancels scheduled ones
 that have not been delivered yet.
 
 | Parameter       | Type            | Required | Description                                            |
@@ -238,13 +244,14 @@ that have not been delivered yet.
 | `topic`         | string          | no       | Their topic. Defaults to the first `NTFY_TOPICS` entry |
 | `confirm_token` | string          | no       | The token from this tool's previous, unconfirmed response |
 
-Call once without `confirm_token` to receive the token, then again with it. The
-token is bound to a fingerprint of the exact set of ids, so one issued for a single
-message cannot execute a longer list.
+Where the client can show a dialog, one is raised and `confirm_token` is never
+offered. Where it cannot, call once without it to receive the token, then again with
+it. Either way the approval is bound to a fingerprint of the exact set of ids, so one
+obtained for a single message cannot execute a longer list.
 
-### create_user
+### create_user 👤
 
-Creates a **non-admin** account on a self-hosted instance. Requires an admin
+**Asks a person first.** Creates a **non-admin** account on a self-hosted instance. Requires an admin
 account. The API cannot create administrators; only the ntfy command line can
 (`ntfy user add --role=admin`).
 
@@ -253,15 +260,21 @@ account. The API cannot create administrators; only the ntfy command line can
 | `username` | string (≤64)    | yes      | The account name                               |
 | `password` | string (8–128)  | yes      | Initial password                               |
 | `tier`     | string (≤64)    | no       | Tier name, on an instance that defines tiers   |
+| `confirm_token` | string     | no       | Only on the fallback path                      |
 
-A new account can reach nothing until `manage_user_access` grants it a topic. Be
-aware that a password passed as a tool argument stays in the conversation
+A new account can reach nothing until `manage_user_access` grants it a topic. It is
+asked about all the same, as the mirror image of `delete_user`: bringing an account
+into existence is a change to who may reach this instance, which no annotation
+carries.
+
+Be aware that a password passed as a tool argument stays in the conversation
 transcript — for an account that matters, create it on the server instead. The
-password is not echoed back in the result.
+password is not echoed back in the result, is not in the confirmation prompt, and is
+not part of the token's binding: what the approval is about is the account name.
 
-### delete_user
+### delete_user 👤
 
-**Confirmation token required.** Removes an account and every access grant attached
+**Asks a person first.** Removes an account and every access grant attached
 to it. Requires an admin account.
 
 | Parameter       | Type         | Required | Description                                               |
@@ -269,9 +282,9 @@ to it. Requires an admin account.
 | `username`      | string (≤64) | yes      | The account to remove                                     |
 | `confirm_token` | string       | no       | The token from this tool's previous, unconfirmed response |
 
-### manage_user_access
+### manage_user_access 👤
 
-**Confirmation token required.** Sets or removes an account's access to a topic or
+**Asks a person first.** Sets or removes an account's access to a topic or
 topic pattern. Requires an admin account.
 
 Destructive in both directions, which is why it is gated: taking access away breaks
