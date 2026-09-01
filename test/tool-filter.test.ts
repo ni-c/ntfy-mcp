@@ -1,3 +1,12 @@
+/**
+ * What this repository still has to prove about its tool filter.
+ *
+ * The filter lives in `mcp-tool-allowlist` and is tested there: pattern syntax,
+ * the preset, how a rejected entry is quoted back, the shape of every message.
+ * What only this repository can assert is the wiring — that the catalogue names
+ * exactly the tools the server registers, that the messages name *these*
+ * variables, and that a filtered tool is really gone rather than merely hidden.
+ */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ALL_TOOLS,
@@ -7,7 +16,7 @@ import {
 } from '../src/tools/catalogue.js';
 
 import { createServer } from '../src/server.js';
-import { ToolFilterError } from '../src/tool-filter.js';
+import { ToolFilterError } from 'mcp-tool-allowlist';
 import { connect, stubFetch, testConfig, toolNames } from './harness.js';
 
 const config = testConfig;
@@ -96,19 +105,6 @@ describe('selecting tools', () => {
     ).toEqual([...ESSENTIAL_TOOLS, 'delete_messages'].sort());
   });
 
-  it('trims entries, ignores case and skips empty ones', async () => {
-    expect(
-      await toolNames({ allowTools: ' LIST_MESSAGES ,, get_message, ' })
-    ).toEqual(['get_message', 'list_messages']);
-  });
-
-  it('treats an empty value as no filter at all', async () => {
-    // `NTFY_ALLOW_TOOLS=` in a compose file must not mean "allow nothing".
-    expect(await toolNames({ allowTools: '   ' })).toEqual(
-      [...ALL_TOOLS].sort()
-    );
-  });
-
   it('leaves an unconfigured server untouched', async () => {
     expect(await toolNames()).toEqual([...ALL_TOOLS].sort());
   });
@@ -153,23 +149,6 @@ describe('refusing an unusable list', () => {
     );
     expect(() => createServer(config({ allowTools: 'list_messagez' }))).toThrow(
       /no tool matches "list_messagez".*list_messages/s
-    );
-  });
-
-  it('rejects a pattern that matches nothing', () => {
-    stubFetch();
-    expect(() => createServer(config({ allowTools: 'lst_*' }))).toThrow(
-      /no tool matches "lst_\*"/
-    );
-  });
-
-  it('rejects a pattern with the star anywhere but last', () => {
-    stubFetch();
-    expect(() => createServer(config({ allowTools: '*_message' }))).toThrow(
-      /single trailing "\*"/
-    );
-    expect(() => createServer(config({ allowTools: 'list_*_x' }))).toThrow(
-      /single trailing "\*"/
     );
   });
 
@@ -230,7 +209,7 @@ describe('together with read-only mode', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() =>
       createServer(config({ ...readOnly, allowTools: 'create_*' }))
-    ).toThrow(/only write tools, but NTFY_READ_ONLY is set/);
+    ).toThrow(/read-only mode suppresses.*NTFY_READ_ONLY is set/s);
   });
 
   it('does not apply the write-tool rule to the deny list', async () => {
