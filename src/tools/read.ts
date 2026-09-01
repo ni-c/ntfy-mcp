@@ -421,7 +421,7 @@ interface UserView {
  * Projects the four fields this tool is about, rather than spreading whatever
  * ntfy sent.
  *
- * A denylist would only remove the sensitive keys known today. ntfy 2.27.0's
+ * A denylist would only remove the sensitive keys known today. ntfy 2.19.2's
  * user record happens to carry no password hash, but that is a property of this
  * upstream release, not of this server — a newer or forked ntfy adding one
  * would ship it into the transcript with no change here.
@@ -470,7 +470,7 @@ function grantMatches(pattern: string, topic: string): boolean {
  * Removes the credentials `GET /v1/account` hands out.
  *
  * ntfy returns every access token of the account in plaintext — verified
- * against 2.27.0. Putting a live credential into the model's context, and
+ * against 2.19.2. Putting a live credential into the model's context, and
  * therefore into the transcript, is exactly the leak this server exists to
  * avoid. `sync_topic` goes too: it is a topic name, which on ntfy is a bearer
  * secret, and no tool here has any use for it.

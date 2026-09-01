@@ -13,7 +13,7 @@ export const PREVIEW_CHARS = 500;
  * ntfy limits the message body to 4096 bytes, and rejects an oversized JSON
  * publish with `41303 JSON body too large`. It does not limit the title, the
  * tag list or the action list on the header form of the publish API: verified
- * against 2.27.0, where a 60 000-character `X-Title` was accepted and a single
+ * against 2.19.2, where a 60 000-character `X-Title` was accepted and a single
  * poll of that topic returned 80 kB. Anyone who can publish to a topic can
  * therefore choose how much of the reader's context one notification occupies.
  */
@@ -124,7 +124,7 @@ export interface MessageEnvelope {
   count: number;
   /**
    * Cursor for the next call. `since=<id>` is exclusive, verified against
-   * 2.27.0, so passing this back returns strictly newer messages.
+   * 2.19.2, so passing this back returns strictly newer messages.
    */
   next_since?: string;
   note?: string;

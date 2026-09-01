@@ -71,9 +71,10 @@ Vitest. The server is driven in-process over an in-memory MCP transport with `fe
 stubbed — see `test/harness.ts`, which is where a new test should start.
 
 ntfy publishes no OpenAPI specification, so behaviour its documentation leaves open
-was checked against a real 2.27.0 instance. Where a test encodes such a fact the
-comment says so and names the version; if you find one of them is no longer true,
-please say which version you checked.
+was checked against a real 2.19.2 instance — the version `test/integration/compose.yml`
+pins, so those claims are re-checked on every pull request rather than only once.
+Where a test encodes such a fact the comment says so and names the version; if you
+find one of them is no longer true, please say which version you checked.
 
 `npm run typecheck` is separate from `npm run build`: the build compiles only `src/`
 into `dist/`, and vitest transpiles `test/` without typechecking it. The typecheck

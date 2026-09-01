@@ -65,7 +65,7 @@ export interface NtfyMessage {
   id: string;
   /**
    * Present only on follow-up events; on the original publish the message's own
-   * `id` *is* its sequence id. Verified against 2.27.0.
+   * `id` *is* its sequence id. Verified against 2.19.2.
    */
   sequence_id?: string;
   time: number;
@@ -365,7 +365,7 @@ export class NtfyApi {
    * `POST /` with the JSON body is used for both. The other documented update
    * route, `POST /{topic}/{sequence_id}`, follows the raw-body convention: it
    * would publish the JSON document as the literal message text, which is what
-   * a first attempt against 2.27.0 actually did.
+   * a first attempt against 2.19.2 actually did.
    */
   publish(body: Record<string, unknown>): Promise<unknown> {
     return this.post('/', body);

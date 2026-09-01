@@ -71,7 +71,7 @@ export const messageIdParam = z
  *
  * zod's `.url()` only asserts that `new URL()` parses the string, so
  * `javascript:`, `file:` and `data:` all pass it. ntfy itself stores whatever it
- * is given — verified against 2.27.0, which accepted `javascript:alert(1)` as a
+ * is given — verified against 2.19.2, which accepted `javascript:alert(1)` as a
  * `click` value without comment.
  *
  * The reason this matters more here than in a server-side fetch guard: ntfy does
@@ -172,7 +172,7 @@ export const sinceParam = z
       'timestamp, or a duration such as "30m", "24h" or "7d"',
   });
 
-/** ntfy's bounds for scheduled delivery, verified against 2.27.0. */
+/** ntfy's bounds for scheduled delivery, verified against 2.19.2. */
 const MIN_DELAY_SECONDS = 10;
 const MAX_DELAY_SECONDS = 3 * 24 * 60 * 60;
 

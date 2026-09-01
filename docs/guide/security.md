@@ -96,7 +96,7 @@ was pointed at, and half of the object is derived locally rather than fetched.
 ## Access tokens are stripped from get_account
 
 `GET /v1/account` returns every access token of the account **in plaintext**
-(verified against ntfy 2.27.0). Each one is overwritten with `(redacted)` rather than
+(verified against ntfy 2.19.2). Each one is overwritten with `(redacted)` rather than
 omitted — a caller seeing no `token` key at all could reasonably read it as "this
 entry had none". No tool in this server creates, reads or exchanges a token either,
 because every such endpoint hands back a live credential that would then live in the
@@ -110,7 +110,7 @@ with no change here.
 ## URLs must be http or https
 
 `click`, `icon`, `attach` and every action-button URL are restricted to the `http:`
-and `https:` schemes. ntfy stores whatever it is given — 2.27.0 accepted
+and `https:` schemes. ntfy stores whatever it is given — 2.19.2 accepted
 `javascript:alert(1)` as a `click` value without comment — and the reason this
 matters more than in an ordinary fetch guard is that **ntfy does not open these
 URLs. The recipient's phone does.** A `click` or `icon` is handed to a mobile client

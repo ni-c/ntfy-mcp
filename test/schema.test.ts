@@ -58,7 +58,7 @@ describe('topicPatternParam', () => {
 
 describe('httpUrl', () => {
   it('rejects the schemes zod’s own .url() accepts', () => {
-    // Verified against ntfy 2.27.0: it stored `javascript:alert(1)` as a click
+    // Verified against ntfy 2.19.2: it stored `javascript:alert(1)` as a click
     // value without comment. The URL is then handed to the recipient's phone
     // and to the web app, so this guard is the only thing standing there.
     for (const value of [

@@ -173,7 +173,7 @@ describe('update_message', () => {
   it('uses the JSON body with sequence_id, not the raw-body route', async () => {
     // `POST /{topic}/{sequence_id}` follows the raw-body convention: it would
     // publish the JSON document as the literal message text, which is exactly
-    // what a first attempt against 2.27.0 did.
+    // what a first attempt against 2.19.2 did.
     const harness = await connect({ topics: ['alerts'] }, () =>
       published('bbbbbbbbbbbb')
     );

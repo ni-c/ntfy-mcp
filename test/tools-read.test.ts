@@ -65,7 +65,7 @@ describe('list_messages', () => {
   });
 
   it('returns next_since as a usable cursor', async () => {
-    // `since=<id>` is exclusive, verified against 2.27.0.
+    // `since=<id>` is exclusive, verified against 2.19.2.
     const harness = await connect({ topics: ['alerts'] }, () =>
       ndjson([message({ id: 'aaaaaaaaaaaa' }), message({ id: 'bbbbbbbbbbbb' })])
     );
@@ -156,7 +156,7 @@ describe('check_topic_access', () => {
   it('reports read access per topic and explains a 403', async () => {
     // The single most confusing thing about ntfy: /{topic}/auth tests the READ
     // side, so a write-only publishing token is denied here and still publishes
-    // fine. Verified against 2.27.0.
+    // fine. Verified against 2.19.2.
     const harness = await connect({}, (request) =>
       request.url.includes('/denied/')
         ? new Response('{"code":40301,"http":403,"error":"forbidden"}', {
@@ -238,7 +238,7 @@ describe('get_server_info', () => {
 
 describe('get_account', () => {
   it('redacts the access tokens ntfy hands out in the clear', async () => {
-    // Verified against 2.27.0: GET /v1/account returns every token value in
+    // Verified against 2.19.2: GET /v1/account returns every token value in
     // plaintext. Putting a live credential into the model's context — and so
     // into the transcript — is the leak this whole server is built to avoid.
     const harness = await connect({}, () => ({

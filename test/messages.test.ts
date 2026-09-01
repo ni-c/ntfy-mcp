@@ -144,7 +144,7 @@ describe('buildEnvelope', () => {
   it('caps the fields ntfy itself does not bound', () => {
     // ntfy limits the message body to 4096 bytes and rejects an oversized JSON
     // publish — but a 60 000-character title goes straight through the header
-    // form of the publish API, verified against 2.27.0.
+    // form of the publish API, verified against 2.19.2.
     const view = toView(
       message({
         title: 'T'.repeat(100_000),
