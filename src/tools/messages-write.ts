@@ -220,7 +220,12 @@ export function registerMessageWriteTools(
         'for cached messages: one published with "cache": false cannot be ' +
         'updated. Only the fields given are sent; the cache keeps each ' +
         'revision as its own entry pointing back at the original, which is why ' +
-        'list_messages shows them with an "updates" field.',
+        'list_messages shows them with an "updates" field — the original keeps ' +
+        'its old text and a second entry carries the new one.\n\n' +
+        'Needs ntfy 2.16.0 or newer, and the failure below that is silent: an ' +
+        'older server simply publishes a **new notification** instead of ' +
+        'revising the old one, and answers success. If subscribers report ' +
+        'receiving two, that is why — check get_server_info for the version.',
       annotations: {
         // Replaces the fields of a message somebody already received a copy
         // of. What was there is not recoverable.
@@ -265,7 +270,12 @@ export function registerMessageWriteTools(
       title: 'Mark notifications read',
       description:
         "Clears notifications on subscribers' devices. The messages stay in " +
-        'the server cache and remain readable with list_messages.',
+        'the server cache and remain readable with list_messages — that is the ' +
+        'whole difference from delete_messages, which also leaves them there ' +
+        'but tells subscribers to remove rather than to clear.\n\n' +
+        'Needs ntfy 2.16.0 or newer. Against an older server every id comes ' +
+        'back with ok:false inside a result that is not an error — check the ' +
+        'per-id results rather than only whether the call succeeded.',
       annotations: {
         // A marker, and ntfy keeps the message either way.
         readOnlyHint: false,
@@ -311,7 +321,16 @@ export function registerMessageWriteTools(
       description:
         'Deletes notifications and cancels scheduled ones that have not been ' +
         'delivered yet. Requires a confirmation token: call once without it to ' +
-        'receive the token, then again with it.',
+        'receive the token, then again with it.\n\n' +
+        '"Deleted" means subscribers are told to remove their copy. ntfy ' +
+        'publishes a message_delete event and does **not** remove anything ' +
+        'from its own cache, so list_messages and get_message still return the ' +
+        'message afterwards, until it expires. Do not read that as the delete ' +
+        'having failed, and do not delete again: the delete event is in the ' +
+        'list too, alongside the message it refers to.\n\n' +
+        'Needs ntfy 2.16.0 or newer. Against an older server every id comes ' +
+        'back with ok:false inside a result that is not an error — check the ' +
+        'per-id results rather than only whether the call succeeded.',
       annotations: {
         // Deleted notifications do not come back, and scheduled ones are not
         // sent. Idempotent: deleting the same ids twice leaves the same topic.
