@@ -67,9 +67,14 @@ export function ndjson(lines: unknown[]): Response {
   });
 }
 
+/** How a client that can show a dialog answers it. */
+export type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
+
 export interface Harness {
   client: Client;
   calls: Recorded[];
+  /** Every message the server put in front of the user, in order. */
+  prompts: string[];
   call: (
     name: string,
     args?: Record<string, unknown>
@@ -80,11 +85,27 @@ export interface Harness {
 /** Connects an SDK client to an in-process server. */
 export async function connect(
   overrides: Partial<Config> = {},
-  respond?: (request: Recorded) => unknown
+  respond?: (request: Recorded) => unknown,
+  // Omitted means the client declares no elicitation capability, which is the
+  // case the two-call token exists for and what every other test here drives.
+  elicit?: ElicitBehaviour
 ): Promise<Harness> {
   const calls = stubFetch(respond);
   const server = createServer(testConfig(overrides));
-  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const prompts: string[] = [];
+  const client = new Client(
+    { name: 'test-client', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', (request) => {
+      const params = request.params as { message?: string };
+      prompts.push(params.message ?? '');
+      if (elicit === 'cancel') return { action: 'cancel' };
+      if (elicit === 'decline') return { action: 'decline' };
+      return { action: 'accept', content: { confirm: true } };
+    });
+  }
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await Promise.all([
@@ -94,6 +115,7 @@ export async function connect(
   return {
     client,
     calls,
+    prompts,
     call: (name, args = {}) =>
       client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
     text: (result) =>

@@ -1,4 +1,7 @@
-import type { CallToolResult } from '@modelcontextprotocol/server';
+import type {
+  CallToolResult,
+  InputRequiredResult,
+} from '@modelcontextprotocol/server';
 
 import { NtfyApiError } from './api.js';
 
@@ -143,8 +146,8 @@ function adminHint(path: string): string {
  * of protocol-level failures.
  */
 export async function run(
-  fn: () => Promise<CallToolResult>
-): Promise<CallToolResult> {
+  fn: () => Promise<CallToolResult | InputRequiredResult>
+): Promise<CallToolResult | InputRequiredResult> {
   try {
     return await fn();
   } catch (error) {

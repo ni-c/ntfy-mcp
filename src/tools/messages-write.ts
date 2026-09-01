@@ -1,10 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   actionSchema,
   confirmTokenParam,
@@ -21,7 +18,7 @@ import {
 } from '../schema.js';
 
 import type { NtfyApi, NtfyMessage } from '../api.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { errorResult, jsonResult, run } from '../result.js';
 
 const MAX_TOPICS = 10;
 const MAX_IDS = 25;
@@ -91,7 +88,8 @@ function contentBody(args: ContentArgs): Record<string, unknown> {
 export function registerMessageWriteTools(
   server: McpServer,
   api: NtfyApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'publish_message',
@@ -306,26 +304,36 @@ export function registerMessageWriteTools(
         confirm_token: confirmTokenParam.optional(),
       }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const topic = api.resolveTopic(args.topic);
         // Fingerprinted over the exact set, so a token issued for one id cannot
         // execute a longer list the model chose afterwards.
-        const key = setResourceKey(
-          'delete_messages',
-          args.sequence_ids.map((id) => `${topic}/${id}`)
-        );
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `delete ${args.sequence_ids.length} notification(s) from topic ` +
-                `"${topic}", including any that are still scheduled`,
-              token,
-              confirmations.ttlMinutes
-            )
-          );
+              `"${topic}", including any that are still scheduled`,
+            consequence:
+              'Deleted notifications cannot be recovered, and scheduled ones will not be sent.',
+            resourceKey: setResourceKey(
+              'delete_messages',
+              args.sequence_ids.map((id) => `${topic}/${id}`)
+            ),
+            token: args.confirm_token,
+            toolName: 'delete_messages',
+            title: `Delete ${args.sequence_ids.length} notification(s)?`,
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_messages did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const results = [];
         for (const id of args.sequence_ids) {

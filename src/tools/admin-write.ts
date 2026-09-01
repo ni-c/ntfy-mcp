@@ -1,11 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  tupleResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
+
+import { tupleResourceKey } from '../resource-key.js';
 import {
   confirmTokenParam,
   topicPatternParam,
@@ -13,7 +11,7 @@ import {
 } from '../schema.js';
 
 import type { NtfyApi } from '../api.js';
-import { jsonResult, run, textResult } from '../result.js';
+import { errorResult, jsonResult, run } from '../result.js';
 
 /**
  * The five unambiguous names this server exposes, mapped to the permission
@@ -57,7 +55,8 @@ void _actionsAgree;
 export function registerAdminWriteTools(
   server: McpServer,
   api: NtfyApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'create_user',
@@ -120,20 +119,31 @@ export function registerAdminWriteTools(
         confirm_token: confirmTokenParam.optional(),
       }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
-        const key = setResourceKey('delete_user', [args.username]);
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `delete the account "${args.username}" and all of its topic ` +
-                'access grants',
-              token,
-              confirmations.ttlMinutes
-            )
-          );
+              'access grants',
+            consequence:
+              'The account and every access grant attached to it are removed.',
+            resourceKey: setResourceKey('delete_user', [args.username]),
+            token: args.confirm_token,
+            toolName: 'delete_user',
+            title: `Delete the account "${args.username}"?`,
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_user did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
+
         await api.delete('/v1/users', { username: args.username });
         return jsonResult({ deleted: args.username });
       })
@@ -168,28 +178,46 @@ export function registerAdminWriteTools(
         confirm_token: confirmTokenParam.optional(),
       }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         // tupleResourceKey, not setResourceKey: these three are positional and
         // their vocabularies overlap, so sorting them would let a token
         // approved for one (user, topic) pair execute the reverse pair.
-        const key = tupleResourceKey('manage_user_access', [
-          args.username,
-          args.topic,
-          args.action,
-        ]);
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          const what =
-            args.action === 'revoke'
-              ? `remove the access rule for "${args.username}" on topic ` +
-                `"${args.topic}"`
-              : `set "${args.username}" to ${args.action} on topic ` +
-                `"${args.topic}"`;
-          return textResult(
-            confirmationPrompt(what, token, confirmations.ttlMinutes)
+        // tupleResourceKey, not setResourceKey: these three are positional and
+        // their vocabularies overlap, so sorting them would let a token
+        // approved for one (user, topic) pair execute the reverse pair.
+        const what =
+          args.action === 'revoke'
+            ? `remove the access rule for "${args.username}" on topic ` +
+              `"${args.topic}"`
+            : `set "${args.username}" to ${args.action} on topic ` +
+              `"${args.topic}"`;
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: what,
+            consequence:
+              'Access rules take effect immediately for anyone using that account.',
+            resourceKey: tupleResourceKey('manage_user_access', [
+              args.username,
+              args.topic,
+              args.action,
+            ]),
+            token: args.confirm_token,
+            toolName: 'manage_user_access',
+            title: 'Change this access rule?',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. manage_user_access did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         if (args.action === 'revoke') {
           await api.delete('/v1/users/access', {

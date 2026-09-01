@@ -216,6 +216,59 @@ describe('mark_messages_read', () => {
 });
 
 describe('delete_messages', () => {
+  it('asks the user, and deletes once they accept', async () => {
+    // The point of the approval path: a client that can put a question in front
+    // of a person gets asked, instead of a token that only proves the same call
+    // was made twice.
+    const harness = await connect({ topics: ['alerts'] }, () => ({}), 'accept');
+    const result = await harness.call('delete_messages', {
+      sequence_ids: ['aaaaaaaaaaaa'],
+    });
+    expect(harness.prompts).toHaveLength(1);
+    expect(harness.calls).toHaveLength(1);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('deletes nothing when the user declines', async () => {
+    const harness = await connect(
+      { topics: ['alerts'] },
+      () => ({}),
+      'decline'
+    );
+    const result = await harness.call('delete_messages', {
+      sequence_ids: ['aaaaaaaaaaaa'],
+    });
+    expect(result.isError).toBe(true);
+    expect(harness.text(result)).toContain('declined');
+    expect(harness.calls).toHaveLength(0);
+  });
+
+  it('deletes nothing when the user closes the dialog', async () => {
+    // Cancel is not a yes: for an irreversible delete the only safe reading of
+    // "no answer" is no.
+    const harness = await connect({ topics: ['alerts'] }, () => ({}), 'cancel');
+    const result = await harness.call('delete_messages', {
+      sequence_ids: ['aaaaaaaaaaaa'],
+    });
+    expect(result.isError).toBe(true);
+    expect(harness.calls).toHaveLength(0);
+  });
+
+  it('offers no token to a client it can ask properly', async () => {
+    // The control that makes the three above mean something: the token path is
+    // unchanged, so a server that silently never asked would still pass every
+    // other test in this file.
+    const harness = await connect(
+      { topics: ['alerts'] },
+      () => ({}),
+      'decline'
+    );
+    const result = await harness.call('delete_messages', {
+      sequence_ids: ['aaaaaaaaaaaa'],
+    });
+    expect(harness.text(result)).not.toContain('confirm_token');
+  });
+
   it('asks for a token first and touches nothing', async () => {
     const harness = await connect({ topics: ['alerts'] }, () => ({}));
     const result = await harness.call('delete_messages', {
@@ -259,7 +312,10 @@ describe('delete_messages', () => {
       sequence_ids: ['aaaaaaaaaaaa'],
       confirm_token: token,
     });
-    expect(harness.text(replay)).toContain('confirm_token');
+    // Refused with the reason rather than answered with a fresh prompt: a
+    // token that was sent and did not match means the call carried a
+    // confirmation issued for different arguments.
+    expect(harness.text(replay)).toContain('issued for different arguments');
     expect(harness.calls).toHaveLength(1);
   });
 
@@ -279,7 +335,10 @@ describe('delete_messages', () => {
       confirm_token: token,
     });
     expect(harness.calls).toHaveLength(0);
-    expect(harness.text(wider)).toContain('confirm_token');
+    // Refused with the reason rather than answered with a fresh prompt: a
+    // token that was sent and did not match means the call carried a
+    // confirmation issued for different arguments.
+    expect(harness.text(wider)).toContain('issued for different arguments');
   });
 });
 
@@ -321,7 +380,12 @@ describe('delete_user', () => {
       confirm_token: token,
     });
     expect(harness.calls).toHaveLength(0);
-    expect(harness.text(wrongTarget)).toContain('confirm_token');
+    // Refused with the reason rather than answered with a fresh prompt: a
+    // token that was sent and did not match means the call carried a
+    // confirmation issued for different arguments.
+    expect(harness.text(wrongTarget)).toContain(
+      'issued for different arguments'
+    );
 
     const right = await harness.call('delete_user', {
       username: 'alice',
@@ -399,7 +463,10 @@ describe('manage_user_access', () => {
       confirm_token: token,
     });
     expect(harness.calls).toHaveLength(0);
-    expect(harness.text(swapped)).toContain('confirm_token');
+    // Refused with the reason rather than answered with a fresh prompt: a
+    // token that was sent and did not match means the call carried a
+    // confirmation issued for different arguments.
+    expect(harness.text(swapped)).toContain('issued for different arguments');
   });
 
   it('will not reuse a token with the username and topic swapped', async () => {
@@ -423,7 +490,10 @@ describe('manage_user_access', () => {
       confirm_token: token,
     });
     expect(harness.calls).toHaveLength(0);
-    expect(harness.text(swapped)).toContain('confirm_token');
+    // Refused with the reason rather than answered with a fresh prompt: a
+    // token that was sent and did not match means the call carried a
+    // confirmation issued for different arguments.
+    expect(harness.text(swapped)).toContain('issued for different arguments');
   });
 
   it('accepts a wildcard here, which publishing does not', async () => {

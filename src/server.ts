@@ -6,7 +6,7 @@ import { ALL_TOOLS, ESSENTIAL_TOOLS, READ_TOOLS } from './tools/catalogue.js';
 
 import { NtfyApi } from './api.js';
 import type { Config } from './config.js';
-import { ConfirmationStore } from './confirm.js';
+import { ConfirmationStore, createApproval } from 'mcp-approval';
 import { registerAdminWriteTools } from './tools/admin-write.js';
 import { registerMessageWriteTools } from './tools/messages-write.js';
 import { registerReadTools } from './tools/read.js';
@@ -62,6 +62,9 @@ export function createServer(config: Config): McpServer {
 
   const api = new NtfyApi(config);
   const confirmations = new ConfirmationStore();
+  // One approver per server: it holds the key that seals the request state
+  // carried out through the client and back.
+  const approval = createApproval({ server: 'ntfy-mcp' });
 
   const server = new McpServer(
     {
@@ -79,8 +82,8 @@ export function createServer(config: Config): McpServer {
   // Read-only mode does not register the write tools at all. Rejecting them at
   // call time would still advertise capabilities the server refuses to provide.
   if (!config.readOnly) {
-    registerMessageWriteTools(server, api, confirmations);
-    registerAdminWriteTools(server, api, confirmations);
+    registerMessageWriteTools(server, api, confirmations, approval);
+    registerAdminWriteTools(server, api, confirmations, approval);
   }
 
   return server;
