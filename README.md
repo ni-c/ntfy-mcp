@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/%40ni-c%2Fntfy-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fntfy--mcp-blue)](https://github.com/ni-c/ntfy-mcp/pkgs/container/ntfy-mcp)
 [![docs](https://img.shields.io/badge/docs-ntfy--mcp.ni--c.de-informational)](https://ntfy-mcp.ni-c.de)
+[![HTTP • via mcp-hub](https://img.shields.io/badge/HTTP-via%20mcp--hub-6f42c1)](https://mcp-hub.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for
@@ -38,6 +39,18 @@ than from thirteen — see [choosing which tools load](#choosing-which-tools-loa
      reproduces without touching a real instance — see the header of that file. -->
 
 ![Demo: listing the tools, publishing a notification and revising it in place through the MCP Inspector CLI](https://ntfy-mcp.ni-c.de/demo.gif)
+
+## What makes it different
+
+**A progress report stays one notification.** The id `publish_message` returns is
+also the notification's sequence id, and `update_message` replaces its content in
+place — subscribers watch one notification change from "building" to "deployed"
+instead of collecting five.
+
+**`NTFY_TOPICS` is the fence.** On ntfy a topic name is a bearer credential:
+knowing it is often the whole of the access control. One variable names the topics
+this server may touch and supplies the default when a tool omits one, so the name
+stays out of the tool arguments and out of the model's context.
 
 ## Requirements
 
@@ -167,6 +180,41 @@ docker run -i --rm \
   ghcr.io/ni-c/ntfy-mcp
 ```
 
+### Through mcp-hub
+
+A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
+Cursor, LibreChat — reaches ntfy-mcp through [mcp-hub](https://mcp-hub.ni-c.de): one
+container serves many stdio MCP servers over Streamable HTTP, with an OAuth 2.1 login
+behind a single password and long-lived tokens for the clients that cannot do OAuth. Its
+`/hub` endpoint puts every server behind six meta-tools, so one connector reaches all of
+them without N×tool schemas in the model's context, and it speaks both protocol revisions
+— a question this server asks travels through it to the person at the far end.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you already
+have:
+
+```json
+{
+  "mcpServers": {
+    "ntfy-mcp": {
+      "command": "npx",
+      "args": ["-y", "@ni-c/ntfy-mcp"],
+      "env": {
+        "NTFY_URL": "https://ntfy.example.net",
+        "NTFY_TOKEN": "…",
+        "NTFY_TOPICS": "alerts",
+        "NTFY_ALLOW_TOOLS": "essential"
+      },
+      "denyTools": ["delete_messages"]
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` there are the hub's **own** per-server filter, which is not
+the same thing as `*_ALLOW_TOOLS` in `env` — the difference, and the mistake it invites,
+are in the [client guide](https://ntfy-mcp.ni-c.de/guide/clients#through-mcp-hub).
+
 ## Tools
 
 `*` marks the `essential` preset.
@@ -248,6 +296,14 @@ existing ones show up.
   gateway. `GET /v1/account` returns several of them anyway; `get_account` drops
   them rather than passing on a payload no tool here uses.
 
+## Not exposed, on purpose
+
+**No topic enumeration** — ntfy has no such API, and neither does anything else. A
+topic exists because someone published to it, and on an instance with the default
+access rules its name is the whole of the access control, so a list endpoint would
+be a list of credentials. `get_account` names the topics the account is subscribed
+to and `list_users` the per-topic grants; those are the two honest answers.
+
 ## Safety
 
 - **A person is asked, not just told.** Where the client supports MCP elicitation,
@@ -284,6 +340,11 @@ existing ones show up.
   cuts finer along the same line — a filtered tool is never built, not refused at call
   time.
 
+## Documentation
+
+The full guide, tool reference and security notes live at
+**[ntfy-mcp.ni-c.de](https://ntfy-mcp.ni-c.de)** (source in [`docs/`](docs/)).
+
 ## Development
 
 ```sh
@@ -319,6 +380,13 @@ provenance), pushes the multi-arch container image to GHCR, creates the GitHub
 release from the CHANGELOG section, and updates the entry in the official MCP
 registry.
 
+## Contributing
+
+Issues, discussions and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). For vulnerabilities please use
+[private reporting](https://github.com/ni-c/ntfy-mcp/security/advisories/new)
+rather than a public issue; the policy is in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT © Willi Thiel
+[MIT](LICENSE) © Willi Thiel
