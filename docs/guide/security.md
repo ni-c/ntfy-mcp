@@ -31,9 +31,20 @@ to revoke — the name is the credential.
 
 Two things follow. Set `NTFY_TOPICS` so this server can only touch the topics you
 meant, and treat the names the way you would treat a password. The server does its
-part: the account's `sync_topic` is stripped out of `get_account`, and the first
+part: the account's `sync_topic` never leaves `get_account`, and the first
 `NTFY_TOPICS` entry is the default for tools called without a topic, so the name
 does not have to travel through the tool arguments to be used.
+
+The list bounds the two account tools as well, which is less obvious than it
+sounds, because neither of them takes a topic the way a publish does.
+`manage_user_access` takes a *pattern*, and a pattern is a promise about topics
+that do not exist yet — `deploy*` covers every future topic starting with those
+letters and `*` covers all of them — so where `NTFY_TOPICS` is set, a wildcard is
+refused outright and a plain name has to be on the list. `list_users` takes no
+topic at all and *returns* them: an unfiltered `/v1/users` is the one endpoint on
+ntfy that answers "which topics exist here", for every account at once. Its grants
+are therefore restated against the allowed topics — a wildcard grant appears once
+per allowed topic it covers, and a grant that covers none of them is not shown.
 
 ## Writes are registered by default
 
@@ -46,8 +57,8 @@ behind it.
 
 ## The confirmation, honestly
 
-Four tools **ask a person** before they act: `delete_messages`, `delete_user`,
-`manage_user_access` and `create_user`.
+Five tools **ask a person** before they act: `delete_messages`, `delete_user`,
+`manage_user_access`, `create_user` and `update_message`.
 
 Where the MCP client supports elicitation, the question is a **dialog** shown to
 whoever is sitting there. The model cannot answer it on their behalf, and nothing
@@ -57,6 +68,13 @@ happens until an answer comes back.
 mirror image of `delete_user`: bringing an account into existence is a change to who
 may reach this instance, and no annotation carries that — `destructiveHint` is about
 what a call takes away.
+
+`update_message` is on it because of what ntfy ≥ 2.16 does with it. The revision
+replaces the notification **on the subscribers' devices**, so the text they were
+shown survives nowhere but this server's cache, and the tool carries the whole
+content schema — including `actions`, where an `http` button fires from the
+recipient's phone with a method, headers and body the caller chose. The argument
+that leaves publishing unguarded covers publishing and stops there.
 
 Where the client cannot show a dialog, the tool falls back to a short-lived,
 single-use token. Be clear about what that proves, because this server is: **the
@@ -78,6 +96,13 @@ the count or the username and nothing else, because that text is read by a model
 and the prompt is read back both by a person and by a model, so it is in neither
 the text nor the token's binding.
 
+One thing an approval does **not** prove is freshness. The sealed state carries no
+nonce and verifying it spends nothing, so a retried leg or a gateway that re-sends
+can run an approved operation twice without asking again. Every guarded tool here is
+idempotent in effect, so that lands on the same instance either way; the one
+operation that genuinely acts twice is `publish_message`, which is unguarded, and
+ntfy has no idempotency key that would change it.
+
 See [Asking a person](/guide/approval) for what the dialog contains, which clients
 show one, and what `ELICITATION=false` does and does not change.
 
@@ -93,7 +118,7 @@ chooses their own username.
 instance's own configuration and counters, set by whoever runs the server this client
 was pointed at, and half of the object is derived locally rather than fetched.
 
-## Access tokens are stripped from get_account
+## get_account and list_users answer from an allowlist
 
 `GET /v1/account` returns every access token of the account **in plaintext**
 (verified against ntfy 2.19.2). Each one is overwritten with `(redacted)` rather than
@@ -102,10 +127,17 @@ entry had none". No tool in this server creates, reads or exchanges a token eith
 because every such endpoint hands back a live credential that would then live in the
 conversation transcript.
 
-`list_users` projects the four fields it is about instead of forwarding whatever ntfy
-sent. A denylist would only remove the sensitive keys known today; a newer or forked
-ntfy that adds a password hash to the user record would ship it into the transcript
-with no change here.
+The rest of that response is dropped rather than filtered. `get_account` reports the
+username, role, tier, limits, usage, language and the metadata of each token, and
+nothing else — not the phone numbers, not the `billing` block with its Stripe
+identifiers, and not the `reservations` and `subscriptions` arrays, each of which is
+a list of topic names. A denylist would have removed only what was known to be
+sensitive on the day it was written; an allowlist drops the field a newer or forked
+ntfy adds without an edit here.
+
+`list_users` projects the four fields it is about for the same reason. This upstream
+release carries no password hash in the user record, but that is a property of ntfy
+2.19.2 rather than of this server.
 
 ## URLs must be http or https
 

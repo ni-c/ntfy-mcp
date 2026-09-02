@@ -8,8 +8,8 @@ All configuration is by environment variable; there is no config file.
 | `NTFY_TOKEN`        | no       | —         | Access token (`tk_…`). Mutually exclusive with the two below                                  |
 | `NTFY_USERNAME`     | no       | —         | Basic-auth user. Must be set together with `NTFY_PASSWORD`                                    |
 | `NTFY_PASSWORD`     | no       | —         | Basic-auth password                                                                           |
-| `NTFY_TOPICS`       | no       | —         | Comma-separated topics this server may use. The first is the default when a tool omits one, and the list restricts every tool, read and write |
-| `NTFY_READ_ONLY`    | no       | `false`   | Exactly `true` registers only the six read tools. Note the default                            |
+| `NTFY_TOPICS`       | no       | —         | Comma-separated topics this server may use. The first is the default when a tool omits one, and the list restricts every tool, read and write — grants included |
+| `NTFY_READ_ONLY`    | no       | `false`   | `true`, `1` or `yes`, any case, registers only the six read tools. Note the default            |
 | `NTFY_ALLOW_TOOLS`  | no       | —         | Tool names, `list_*` prefixes or `essential`; only these register                             |
 | `NTFY_DENY_TOOLS`   | no       | —         | Same syntax; subtracted from whatever the allow list left                                     |
 | `NTFY_INSECURE_TLS` | no       | `false`   | `true` accepts self-signed certificates, scoped to this connection                            |
@@ -93,11 +93,18 @@ Unlike [imap-mcp](https://github.com/ni-c/imap-mcp), where the same variable def
 to `true`. ntfy exists to publish, and a read-only default would ship a notification
 server that cannot notify.
 
-**Only the literal string `true` disables the write tools.** `NTFY_READ_ONLY=ture`
-or `=1` leaves them enabled — because the default is permissive, a typo fails open
-here. The destructive tools are gated behind confirmation tokens and ntfy's own
-permissions instead, and `NTFY_ALLOW_TOOLS=essential` or a `NTFY_DENY_TOOLS` list is
-the recommended hardening:
+`true`, `1` and `yes` all disable the write tools, in any case. A switch that *adds*
+a protection is parsed generously on purpose — an equality check against `true` left
+`NTFY_READ_ONLY=1` with every write tool registered and printed nothing, because
+nothing prints for a variable that parsed to false. `NTFY_INSECURE_TLS` is strict for
+the mirror-image reason: it removes a protection, so anything it does not recognise
+has to mean "keep validating".
+
+**A genuine typo still fails open**, because the default is permissive:
+`NTFY_READ_ONLY=ture` is not one of the three and leaves the write tools enabled,
+where in imap-mcp it would fail closed. The destructive tools are gated behind the
+approval dialog and ntfy's own permissions instead, and `NTFY_ALLOW_TOOLS=essential`
+or a `NTFY_DENY_TOOLS` list is the recommended hardening:
 
 ```sh
 NTFY_TOPICS=deploys
@@ -138,6 +145,10 @@ written.
 
 ## `NTFY_INSECURE_TLS`
 
-`true` accepts a self-signed certificate. It is scoped to this connection rather than
-setting `NODE_TLS_REJECT_UNAUTHORIZED`, so certificate validation stays on for
-everything else in the process. Prefer a proper internal CA in the trust store.
+Exactly `true` accepts a self-signed certificate — `1` and `yes` do not, unlike
+`NTFY_READ_ONLY`. The asymmetry is the point: this variable removes a protection, so
+a value the parser does not recognise has to leave validation on.
+
+It is scoped to this connection rather than setting `NODE_TLS_REJECT_UNAUTHORIZED`,
+so certificate validation stays on for everything else in the process. Prefer a
+proper internal CA in the trust store.

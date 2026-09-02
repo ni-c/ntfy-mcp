@@ -1,7 +1,7 @@
 # Asking a person
 
-Four of the thirteen tools change who can reach this instance, or take
-notifications away from people who may not have read them yet. All four **ask a
+Five of the thirteen tools change who can reach this instance, or take
+notifications away from people who may not have read them yet. All five **ask a
 person first**.
 
 Not a `confirm: true` argument the model can set. Not a token the model reads out
@@ -25,6 +25,7 @@ answer comes back, nothing happens.
 | `delete_user` | always |
 | `manage_user_access` | always |
 | `create_user` | always |
+| `update_message` | always |
 | everything else | never |
 
 `create_user` is the odd one on that list, because it destroys nothing. It is the
@@ -39,6 +40,15 @@ a destructive one. The control for that is `NTFY_TOPICS`, which bounds where thi
 server may publish at all, and an ntfy account scoped to those topics behind it. A
 dialog before every notification would be how people learn to tick without
 reading.
+
+`update_message` looks like publishing's sibling and is not, which is why that
+argument stops before it. From ntfy 2.16 a revision replaces the notification **on
+the subscribers' devices**: the text they were shown is gone everywhere but this
+server's cache, so it takes something away rather than only adding one. It also
+carries the same content schema as `publish_message`, `actions` included, and an
+`http` button fires from the recipient's phone with a method, headers and body the
+caller chose. What is confirmed is the notification, not the new text — binding the
+content would ask again for every corrected typo while proving nothing.
 
 ## What the dialog contains
 
@@ -135,9 +145,28 @@ They are advice, and the specification says so:
 An annotation is something a client may ignore. The dialog is not: it is enforced
 here, on the server side, and no answer means no change. The two are different
 claims — the annotation says what a call _does_, the dialog decides whether it
-_happens_ — which is why a tool can be marked destructive without being guarded.
-`update_message` is exactly that case: it replaces the fields of a notification
-people already have a copy of, which is destructive, and it is not asked about.
+_happens_ — so the two lists are related but not the same. `create_user` is the
+standing example in the other direction: it destroys nothing, and it is guarded.
+
+## An approval proves binding, not freshness
+
+The state that carries a dialog's answer back is sealed, and the seal proves the
+question was this server's and named this target. It does not prove the answer is
+being used for the first time: it carries no nonce, and verifying it spends
+nothing, so the same answer can be submitted again until it expires. Whoever can
+do that received the question in the first place and is the client — this is not a
+route around the person — but it does mean **at-most-once is not guaranteed on the
+dialog path**. The two-call token is the opposite: it is a secret the server keeps
+and deletes on use.
+
+Every guarded tool here is idempotent in effect, so a repeated leg lands on the
+same instance: `create_user` and `delete_user` fail the second time, the access
+rule is written or removed once, a second delete re-announces a deletion
+subscribers were already told about, and a replayed `update_message` re-applies
+the revision it applied before. `publish_message` is the one operation that
+genuinely acts twice, and it is unguarded — so there is no approval state to
+replay, and ntfy offers no idempotency key that would make it safe to retry
+blindly. See the [security policy](https://github.com/ni-c/ntfy-mcp/blob/main/SECURITY.md).
 
 ## Behind a gateway
 

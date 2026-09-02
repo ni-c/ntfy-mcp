@@ -64,4 +64,5 @@ Send me a notification on the alerts topic when the test suite finishes.
 ```
 
 Keep the id that comes back. Passing it to `update_message` as `sequence_id` revises
-that notification in place instead of sending a second one.
+that notification in place instead of sending a second one — and asks you first,
+because the revision replaces the message on the devices that already have it.

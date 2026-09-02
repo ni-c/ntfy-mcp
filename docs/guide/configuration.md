@@ -69,6 +69,12 @@ allowlist. A topic name is a bearer credential on ntfy, and someone who sets a
 default without a restriction has bought no safety while believing they have.
 Coupling them makes both properties arrive together.
 
+"Every tool" includes the two that administer access. `manage_user_access` refuses a
+grant pattern that reaches past the list — `*` always does, and so does any prefix,
+because a pattern also covers topics that do not exist yet — and `list_users` reports
+each account's grants against the allowed topics rather than handing back the name of
+every topic on the instance.
+
 Leaving it unset means no default and no restriction: every tool then needs an
 explicit topic, and any topic on the instance is reachable.
 
@@ -99,9 +105,12 @@ NTFY_READ_ONLY=true    # registers the six read tools and nothing else
 that cannot notify, while a mailbox is an irreplaceable archive. Two consequences
 follow from that direction:
 
-- **Only the literal string `true` disables the write tools.** `NTFY_READ_ONLY=ture`
-  or `=1` leaves them enabled. Because the default is permissive, a typo fails
-  **open** here, where in imap-mcp it fails closed.
+- **A genuine typo still fails open.** `true`, `1` and `yes` are all read as
+  read-only, in any case — a switch that adds a protection is parsed generously on
+  purpose. `NTFY_READ_ONLY=ture` is none of them, and because the default is
+  permissive it leaves the write tools enabled, where in imap-mcp it fails closed.
+  (`NTFY_INSECURE_TLS` is strict for the mirror-image reason: it *removes* a
+  protection, so only the exact word will do.)
 - **A client that can publish can publish anywhere on the instance** unless you say
   otherwise. The approval dialog does not help against that — publishing is not a
   destructive operation, and a dialog before every notification would be how people
@@ -109,10 +118,10 @@ follow from that direction:
 
 ## Turning the approval dialog off
 
-`delete_messages`, `delete_user`, `manage_user_access` and `create_user` ask a
-person through MCP elicitation before they act. `ELICITATION=false` takes them to
-the two-call token instead. It does not remove the guard; there is no setting in
-which a guarded call goes unannounced.
+`delete_messages`, `delete_user`, `manage_user_access`, `create_user` and
+`update_message` ask a person through MCP elicitation before they act.
+`ELICITATION=false` takes them to the two-call token instead. It does not remove the
+guard; there is no setting in which a guarded call goes unannounced.
 
 The variable deliberately carries no `NTFY_` prefix, which means it reaches every
 MCP server in the same environment, and — unlike the booleans above — a value it

@@ -47,17 +47,17 @@ than from thirteen — see [choosing which tools load](#choosing-which-tools-loa
 
 ## Configuration
 
-| Variable            | Required | Description                                                                                                                                                   |
-| ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NTFY_URL`          | yes      | Base URL, e.g. `https://ntfy.example.net`. There is deliberately no default — `https://ntfy.sh` would make a misconfiguration publish to the public internet. |
-| `NTFY_TOKEN`        | no       | Access token (`tk_…`). Mutually exclusive with the two below.                                                                                                 |
-| `NTFY_USERNAME`     | no       | Basic-auth user. Must be set together with `NTFY_PASSWORD`.                                                                                                   |
-| `NTFY_PASSWORD`     | no       | Basic-auth password.                                                                                                                                          |
-| `NTFY_TOPICS`       | no       | Comma-separated topics this server may use. The first is the default when a tool omits one, and the list restricts every tool, read and write.                |
-| `NTFY_READ_ONLY`    | no       | Exactly `true` registers only the six read tools. Default `false`.                                                                                            |
-| `NTFY_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset                                                                            |
-| `NTFY_DENY_TOOLS`   | no       | Same syntax; removed from whatever `NTFY_ALLOW_TOOLS` left                                                                                                    |
-| `NTFY_INSECURE_TLS` | no       | `true` accepts self-signed certificates (scoped to this connection)                                                                                           |
+| Variable            | Required | Description                                                                                                                                                             |
+| ------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NTFY_URL`          | yes      | Base URL, e.g. `https://ntfy.example.net`. There is deliberately no default — `https://ntfy.sh` would make a misconfiguration publish to the public internet.           |
+| `NTFY_TOKEN`        | no       | Access token (`tk_…`). Mutually exclusive with the two below.                                                                                                           |
+| `NTFY_USERNAME`     | no       | Basic-auth user. Must be set together with `NTFY_PASSWORD`.                                                                                                             |
+| `NTFY_PASSWORD`     | no       | Basic-auth password.                                                                                                                                                    |
+| `NTFY_TOPICS`       | no       | Comma-separated topics this server may use. The first is the default when a tool omits one, and the list restricts every tool, read and write — access grants included. |
+| `NTFY_READ_ONLY`    | no       | `true`, `1` or `yes` (any case) registers only the six read tools. Default `false`.                                                                                     |
+| `NTFY_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset                                                                                      |
+| `NTFY_DENY_TOOLS`   | no       | Same syntax; removed from whatever `NTFY_ALLOW_TOOLS` left                                                                                                              |
+| `NTFY_INSECURE_TLS` | no       | `true` accepts self-signed certificates (scoped to this connection)                                                                                                     |
 
 Setting `NTFY_TOKEN` together with `NTFY_USERNAME`/`NTFY_PASSWORD` is refused at
 startup rather than resolved by a precedence rule: which credential is in force must
@@ -81,9 +81,10 @@ would ship a notification server that cannot notify — this is the opposite of
 
 Two consequences worth knowing:
 
-- **Only the literal string `true` disables the write tools.** `NTFY_READ_ONLY=ture`
-  or `=1` leaves them enabled. Because the default is permissive, a typo fails open
-  here, where in imap-mcp it failed closed.
+- **A typo still fails open.** `true`, `1` and `yes` are all read as read-only, in
+  any case — a protection switch is parsed generously on purpose. But
+  `NTFY_READ_ONLY=ture` is not any of them, and because the default is permissive it
+  leaves the write tools enabled, where in imap-mcp it would fail closed.
 - **A client that can publish can publish anywhere on the instance** unless you say
   otherwise. Confirmation tokens do not help against that — publishing is not a
   destructive operation. `NTFY_TOPICS` is the control that does.
@@ -214,26 +215,36 @@ existing ones show up.
   filesystem surface this server has no business having. `attach` covers the real case
   by URL.
 - Reservations, billing, web push, email and phone verification, and the Matrix
-  gateway.
+  gateway. `GET /v1/account` returns several of them anyway; `get_account` drops
+  them rather than passing on a payload no tool here uses.
 
 ## Safety
 
 - **A person is asked, not just told.** Where the client supports MCP elicitation,
-  `delete_messages`, `delete_user`, `manage_user_access` and `create_user` raise a
-  real dialog that the model cannot answer on its behalf. Where it does not, they
-  fall back to a short-lived token bound to a fingerprint of the exact target — and
-  say so, rather than implying somebody approved. A confirmation for one target
-  cannot execute another, a longer list, or — for `manage_user_access` — the same
-  three arguments in a different order. See
+  `delete_messages`, `delete_user`, `manage_user_access`, `create_user` and
+  `update_message` raise a real dialog that the model cannot answer on its behalf.
+  Where it does not, they fall back to a short-lived token bound to a fingerprint of
+  the exact target — and say so, rather than implying somebody approved. A
+  confirmation for one target cannot execute another, a longer list, or — for
+  `manage_user_access` — the same three arguments in a different order. See
   [Asking a person](https://ntfy-mcp.ni-c.de/guide/approval).
+- **`NTFY_TOPICS` bounds the access tools too.** `manage_user_access` refuses a
+  pattern that reaches past the list, `*` included: a grant is permanent access to
+  every topic it covers, and no finite allowlist covers a wildcard. `list_users`
+  reports each account's grants against the allowed topics only, because a grant
+  pattern is a topic name and a topic name is a bearer credential.
 - **Confirmation prompts never quote content from ntfy.** They name the topic, the
   count or the username and nothing else, because that text is read by a model. And
   never the password `create_user` was given: it is a live credential, so it is in
   neither the prompt nor the token's binding.
 - **Returned content is marked as untrusted data**, because it is: everything in a
   notification was written by whoever could publish to the topic.
-- **Access tokens are stripped from `get_account`.** ntfy returns every token of the
-  account in plaintext there.
+- **`get_account` answers from an allowlist, not a denylist.** It reports the
+  identity, role, tier, limits, usage and the _metadata_ of each access token, and
+  drops everything else ntfy sends — the token values, which ntfy returns in
+  plaintext, but also the phone numbers, the billing identifiers and the
+  reservation and subscription topic names. A key a future ntfy adds is dropped
+  without an edit here.
 - **Caller-supplied URLs must be `http` or `https`.** `click`, `icon`, `attach` and
   action-button URLs are opened by the recipient's device, not by the server, and
   ntfy stores whatever it is given — including a `javascript:` URL.

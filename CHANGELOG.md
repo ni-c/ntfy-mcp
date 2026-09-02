@@ -71,6 +71,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **`svg-asset-set`** rather than from copies kept here — 740 fewer lines, and
   one place to fix each. None of them has a runtime dependency of its own.
 
+### Security
+
+- **`NTFY_TOPICS` now bounds the access tools, which it had only claimed to.**
+  `manage_user_access` passed its `topic` argument straight into the request
+  body, so `topic: "*"` handed an account permanent read-write access to every
+  topic on the instance — from a server the operator had restricted to one. A
+  grant pattern is now resolved against the list, and where the list is set a
+  wildcard is refused outright: a pattern also covers topics that do not exist
+  yet, and no finite allowlist covers that. The refusal happens before the
+  approval dialog, so a pattern that will not be accepted never becomes a
+  question somebody might tick.
+
+  `list_users` had the same hole from the other side. `GET /v1/users` is the one
+  endpoint on ntfy that answers "which topics exist here", for every account at
+  once, and its grant patterns were forwarded verbatim — so a server restricted
+  to `alerts` was handing back the names of every other topic on the box, and a
+  topic name on ntfy is a bearer credential. Grants are now restated against the
+  allowed topics: a wildcard grant appears once per allowed topic it covers, one
+  that covers none of them is dropped, and the account itself is still listed.
+  The tool's own `topic` filter is resolved against the list too.
+
+- **`update_message` now asks a person.** From ntfy 2.16 an update replaces the
+  notification **on the subscribers' devices**, so the text they were shown
+  survives nowhere but this server's cache — and the tool carries the whole
+  content schema, `actions` included, where an `http` button fires from the
+  recipient's phone with a method, headers and body the caller chose. One
+  unguarded call could turn a delivered alert into a button that calls
+  something. It is gated exactly like `delete_messages`, on a fingerprint of
+  `(topic, sequence_id)`.
+
+  The new content is deliberately **not** part of that fingerprint. What is
+  confirmed is the notification; binding the text would ask again for every
+  corrected typo while proving nothing, since the replacement is only reachable
+  through the same tool call.
+
+  Publishing stays unguarded, and the argument for that now stops where it
+  should. Sending a notification destroys nothing; replacing one that people
+  already have does.
+
+- **`get_account` answers from an allowlist instead of a denylist.** It removed
+  the access token values and `sync_topic` and spread the rest, which meant
+  `phone_numbers`, the `billing` block with its Stripe identifiers, and the
+  `reservations` and `subscriptions` arrays — each a list of topic names — all
+  reached the transcript, while the README listed those very features under "not
+  implemented, on purpose". The tool now projects `username`, `role`, `tier`,
+  `limits`, `stats`, `language` and each token's `label`, `last_access` and
+  `expires`, and drops everything else. A field a newer or forked ntfy adds is
+  dropped without an edit here, which is the property a denylist cannot have.
+
+- **`NTFY_READ_ONLY` accepts `1` and `yes`, in any case.** It compared against
+  the literal string `true`, so `NTFY_READ_ONLY=1` registered every write tool
+  while the operator believed the server was read-only — and said nothing,
+  because nothing is printed for a variable that parsed to false. A switch that
+  _adds_ a protection is now parsed generously; `NTFY_INSECURE_TLS`, which
+  _removes_ one, still takes nothing but the exact word. A genuine typo such as
+  `=ture` still fails open, because the default is `false`.
+
+- **The residual risk that an approval proves binding and not freshness** is
+  now written down rather than implied. The sealed state carries no nonce, so a
+  retried leg can run an approved operation twice; every guarded tool here is
+  idempotent in effect, and `publish_message` — the one operation that genuinely
+  acts twice — is unguarded and has no idempotency key on ntfy's side. See
+  `SECURITY.md`.
+
 ### Fixed
 
 - Confirmation tokens are compared with a **constant-time** comparison. The
@@ -89,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NTFY_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste into
   the wrong one used to print the credential into the client's log.
 
-## [Unreleased]
+- A duplicated comment block in `manage_user_access` — the paragraph explaining
+  why its resource key is a tuple appeared twice.
 
 ## [0.1.0] - 2026-08-29
 
