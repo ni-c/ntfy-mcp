@@ -244,22 +244,54 @@ describe('loadConfig', () => {
     );
   });
 
-  it('only accepts the literal string "true" for read-only', () => {
-    // Because the default is false, a typo leaves writes ON — the README says
-    // so, and this is the assertion behind that sentence.
-    for (const value of ['ture', 'TRUE', 'yes', '1', 'false']) {
+  it('reads every spelling an operator plausibly means by read-only', () => {
+    // A protection switch is parsed generously on purpose. An equality check
+    // against "true" turned NTFY_READ_ONLY=1 into a server with every write
+    // tool registered, and said nothing — nothing prints for a variable that
+    // parsed to false, so the operator had no way to notice.
+    // The trailing space is not padding: a compose file that yields it is a
+    // formatting accident, and reading it as "off" is exactly the silent
+    // failure this tolerance exists to prevent.
+    for (const value of [
+      'true',
+      'TRUE',
+      'True',
+      'yes',
+      'YES',
+      '1',
+      'true ',
+      ' yes',
+    ]) {
+      const config = loadConfig({
+        NTFY_URL: 'https://ntfy.example.net',
+        NTFY_READ_ONLY: value,
+      });
+      expect(config.readOnly, value).toBe(true);
+    }
+  });
+
+  it('still fails open on a genuine typo, because the default is false', () => {
+    // The limit of the tolerance above, and the reason NTFY_TOPICS rather than
+    // this variable is the control the documentation points at.
+    for (const value of ['ture', 'false', 'no', '0', '']) {
       const config = loadConfig({
         NTFY_URL: 'https://ntfy.example.net',
         NTFY_READ_ONLY: value,
       });
       expect(config.readOnly, value).toBe(false);
     }
-    expect(
-      loadConfig({
+  });
+
+  it('keeps NTFY_INSECURE_TLS strict, where strict is the safe direction', () => {
+    // The mirror image: this one removes a protection, so anything but the
+    // exact word has to mean "keep validating".
+    for (const value of ['1', 'yes', 'TRUE']) {
+      const config = loadConfig({
         NTFY_URL: 'https://ntfy.example.net',
-        NTFY_READ_ONLY: 'true',
-      }).readOnly
-    ).toBe(true);
+        NTFY_INSECURE_TLS: value,
+      });
+      expect(config.insecureTls, value).toBe(false);
+    }
   });
 
   it('parses the topic allowlist and keeps its order', () => {

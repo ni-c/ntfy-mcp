@@ -132,6 +132,9 @@ describe('a notification through its whole life', () => {
   });
 
   it('revises it, as a new cache entry pointing back at the original', async () => {
+    // Guarded, so this goes through the dialog — `asking` accepts. What the
+    // guard is for is below: the revision replaces the notification on the
+    // subscribers' devices, and only the cache still holds the original.
     const revised = parse<{ updated: string; revision_id: string }>(
       await asking.call('update_message', {
         sequence_id: publishedId,
@@ -229,6 +232,19 @@ describe('accounts and access', () => {
     await asking.call('delete_user', { username: 'publisher' });
     expect(await asking.call('list_users')).not.toContain('publisher');
   });
+
+  it('refuses a grant that reaches past NTFY_TOPICS', async () => {
+    // Against a real instance, because this is the one refusal whose absence
+    // was invisible: the PUT went through and ntfy accepted it. The server is
+    // started with NTFY_TOPICS set, so "*" — permanent access to every topic
+    // on the box — has to stop here, with the reason named rather than merely
+    // "something failed".
+    await asking.call(
+      'manage_user_access',
+      { username: 'publisher', topic: '*', action: 'read_write' },
+      { expectError: 'NTFY_TOPICS' }
+    );
+  });
 });
 
 describe('the fallback path for a client with no dialog', () => {
@@ -283,7 +299,10 @@ describe('the fallback path for a client with no dialog', () => {
     const token = /confirm_token="([a-f0-9]{32})"/.exec(refusal)?.[1];
     expect(token).toBeDefined();
 
-    // A confirmation shown for one notification must not delete two.
+    // A confirmation shown for one notification must not delete two. The
+    // reason is asserted, not just the failure: a renamed parameter would make
+    // the schema reject this call, and a bare `expectError: true` would stay
+    // green while the binding it names went untested.
     await plain.call(
       'delete_messages',
       {
@@ -291,7 +310,7 @@ describe('the fallback path for a client with no dialog', () => {
         topic: sandbox.topic,
         confirm_token: token,
       },
-      { expectError: true }
+      { expectError: 'issued for different arguments' }
     );
     // Nothing was deleted: no message_delete event names the widened pair.
     const listed = await plain.call('list_messages', {

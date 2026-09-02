@@ -288,18 +288,18 @@ describe('the tools themselves', () => {
     expect(byName.get('mark_messages_read')?.destructiveHint).toBe(false);
   });
 
-  it('require a confirm token on the four guarded tools', async () => {
+  it('require a confirm token on the five guarded tools', async () => {
     // Deliberately a list rather than "wherever destructiveHint is true".
     // Those are two different claims: the annotation says what a call does,
-    // the confirmation decides whether a person is asked first. update_message
-    // is destructive and not guarded, and create_user is guarded without being
-    // destructive — both are gaps worth seeing, not reasons to soften an
-    // annotation until the two lists agree.
+    // the confirmation decides whether a person is asked first. create_user is
+    // guarded without being destructive — a gap worth seeing, not a reason to
+    // soften an annotation until the two lists agree.
     const guarded = [
       'create_user',
       'delete_messages',
       'delete_user',
       'manage_user_access',
+      'update_message',
     ];
     const { client } = await connect();
     const { tools } = await client.listTools();

@@ -60,7 +60,7 @@ export function missingConfigMessage(missing: string[]): string {
     'Credentials (optional, an open instance needs none): NTFY_TOKEN, or ' +
     'NTFY_USERNAME together with NTFY_PASSWORD\n' +
     'Optional: NTFY_TOPICS to set a default topic and restrict the server to it, ' +
-    'NTFY_READ_ONLY=true to expose only read tools, ' +
+    'NTFY_READ_ONLY=true (also 1 or yes) to expose only read tools, ' +
     'NTFY_INSECURE_TLS=true to accept self-signed certificates, ' +
     'NTFY_ALLOW_TOOLS / NTFY_DENY_TOOLS to narrow the tool list ' +
     '(comma-separated names, "list_*" prefixes, or "essential")'
@@ -88,9 +88,10 @@ const TOPIC_PATTERN = /^[-_A-Za-z0-9]{1,64}$/;
  * server started with it off says so on its startup line.
  *
  * Fatal: this is the first variable of the family that defaults to *on*. The
- * others fail open on a typo, which is the safe direction for them. Here a typo
- * would leave the dialog running while the operator believes it is off — and an
- * operator who believes that has no way to find out.
+ * others fail open on a typo, which is the safe direction for them — including
+ * `NTFY_READ_ONLY`, which is deliberately generous about what it accepts. Here a
+ * typo would leave the dialog running while the operator believes it is off —
+ * and an operator who believes that has no way to find out.
  */
 export function parseElicitation(raw: string | undefined): boolean {
   const value = raw?.trim().toLowerCase();
@@ -117,12 +118,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const username = env.NTFY_USERNAME;
   const password = env.NTFY_PASSWORD;
   const rawTopics = env.NTFY_TOPICS;
+  // Strict on purpose, and the opposite of NTFY_READ_ONLY below. This one
+  // *removes* a protection, so the direction that fails safe is refusing
+  // anything but the exact word: an operator who writes NTFY_INSECURE_TLS=1 and
+  // gets certificate validation keeps a working guard, which is the harmless
+  // half of being wrong.
   const insecureTls = env.NTFY_INSECURE_TLS === 'true';
-  // Defaults to false, unlike imap-mcp. ntfy exists to publish; a read-only
-  // default would ship a notification server that cannot notify. Note the
-  // consequence: only the literal string "true" disables writes, so a typo
-  // leaves them *on* here, where in imap-mcp it left them off.
-  const readOnly = env.NTFY_READ_ONLY === 'true';
+  // Generous on purpose. This one *adds* a protection, so a value the parser
+  // does not recognise has to mean "on": `NTFY_READ_ONLY=1`, `=yes` or `=TRUE`
+  // is unmistakably somebody asking for read-only, and an equality check
+  // against "true" would leave the write tools registered while the operator
+  // believed they were gone — silently, because nothing prints for a variable
+  // that parsed to false.
+  //
+  // Trimmed for the same reason it is generous: a compose file that yields
+  // `NTFY_READ_ONLY=true ` with a trailing space is a formatting accident, and
+  // reading it as "off" is the failure this whole branch exists to prevent.
+  //
+  // Note what this does not fix: the default is still false, so a real typo
+  // (`=ture`) fails open, unlike imap-mcp where the same variable defaults to
+  // true. ntfy exists to publish; a read-only default would ship a notification
+  // server that cannot notify.
+  const readOnly = /^(1|true|yes)$/i.test(env.NTFY_READ_ONLY?.trim() ?? '');
   const allowTools = env.NTFY_ALLOW_TOOLS;
   const denyTools = env.NTFY_DENY_TOOLS;
 

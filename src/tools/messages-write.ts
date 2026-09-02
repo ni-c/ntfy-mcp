@@ -18,6 +18,7 @@ import {
 } from '../schema.js';
 
 import type { NtfyApi, NtfyMessage } from '../api.js';
+import { tupleResourceKey } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
 
 const MAX_TOPICS = 10;
@@ -225,7 +226,9 @@ export function registerMessageWriteTools(
         'Needs ntfy 2.16.0 or newer, and the failure below that is silent: an ' +
         'older server simply publishes a **new notification** instead of ' +
         'revising the old one, and answers success. If subscribers report ' +
-        'receiving two, that is why — check get_server_info for the version.',
+        'receiving two, that is why — check get_server_info for the version.\n\n' +
+        'Asks a person first; where the client cannot show a dialog, call once ' +
+        'to receive a token and again with it.',
       annotations: {
         // Replaces the fields of a message somebody already received a copy
         // of. What was there is not recoverable.
@@ -242,15 +245,61 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Its topic. Defaults to the first NTFY_TOPICS entry.'),
         ...contentSchema,
+        confirm_token: confirmTokenParam.optional(),
       }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const topic = api.resolveTopic(args.topic);
         const body = contentBody(args);
         if (Object.keys(body).length === 0) {
           return errorResult('Provide at least one field to change.');
         }
+
+        // Gated like delete_messages, and for the same reason rather than by
+        // analogy: from ntfy 2.16 this replaces the notification *on the
+        // subscribers' devices*, so the text they were shown is gone with no
+        // copy anywhere but this server's cache. It also carries the whole
+        // content schema, which includes `actions` — an "http" button fires
+        // from the recipient's phone with a method, headers and body chosen
+        // here. Turning a delivered alert into a button that calls something is
+        // not what publish_message's unguarded outbound-effect argument covers.
+        //
+        // tupleResourceKey, not setResourceKey: a topic name and a message id
+        // are both letters and digits, so a sorted key would let a
+        // confirmation for one execute the pair the other way round.
+        //
+        // The content is not in the key. What is confirmed is "revise this
+        // notification", and binding the new text would mean a person had to be
+        // asked again for every corrected typo while proving nothing — the
+        // replacement is only reachable through the same tool call.
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
+              `replace the content of notification "${args.sequence_id}" on ` +
+              `topic "${topic}"`,
+            consequence:
+              'Subscribers who already received it see it change in place, ' +
+              'and the text they were shown is not recoverable.',
+            resourceKey: tupleResourceKey('update_message', [
+              topic,
+              args.sequence_id,
+            ]),
+            token: args.confirm_token,
+            toolName: 'update_message',
+            title: 'Revise this notification?',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. update_message did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+
         const updated = (await api.publish({
           ...body,
           topic,

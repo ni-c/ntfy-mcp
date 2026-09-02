@@ -356,7 +356,11 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
       description:
         'Every account on the instance with its per-topic grants — the ' +
         'answer to "who can read or write topic X". Requires an admin ' +
-        'account; get_server_info reports whether the current one qualifies.',
+        'account; get_server_info reports whether the current one qualifies.\n\n' +
+        'Where NTFY_TOPICS restricts this server, the grants are reported ' +
+        'against those topics only: a grant on a wildcard appears once per ' +
+        'allowed topic it covers, and one that covers none of them is not ' +
+        'shown at all.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         username: usernameParam
@@ -378,15 +382,22 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
     },
     async (args) =>
       run(async () => {
+        // Resolved rather than used as given, so the filter is bounded like
+        // every other topic argument on this server. Only when present: an
+        // absent filter means "every account", not "the default topic".
+        const wanted =
+          args.topic === undefined ? undefined : api.resolveTopic(args.topic);
+
         const users = await api.get('/v1/users');
-        let filtered = (Array.isArray(users) ? users : []).map(toUserView);
+        let filtered = (Array.isArray(users) ? users : []).map((entry) =>
+          toUserView(entry, api.allowedTopics)
+        );
         if (args.username !== undefined) {
           filtered = filtered.filter((user) => user.username === args.username);
         }
-        if (args.topic !== undefined) {
-          const topic = args.topic;
+        if (wanted !== undefined) {
           filtered = filtered.filter((user) =>
-            user.grants.some((grant) => grantMatches(grant.topic, topic))
+            user.grants.some((grant) => grantMatches(grant.topic, wanted))
           );
         }
 
@@ -426,22 +437,56 @@ interface UserView {
  * upstream release, not of this server — a newer or forked ntfy adding one
  * would ship it into the transcript with no change here.
  */
-function toUserView(entry: unknown): UserView {
+function toUserView(entry: unknown, allowed: readonly string[]): UserView {
   const source = (entry ?? {}) as Record<string, unknown>;
   const grants = Array.isArray(source.grants) ? source.grants : [];
   const view: UserView = {
     username: text(source.username, '(unknown)'),
     role: text(source.role, '(unknown)'),
-    grants: grants.map((grant) => {
-      const g = (grant ?? {}) as Record<string, unknown>;
-      return {
-        topic: text(g.topic, ''),
-        permission: text(g.permission, ''),
-      };
-    }),
+    grants: projectGrants(
+      grants.map((grant) => {
+        const g = (grant ?? {}) as Record<string, unknown>;
+        return {
+          topic: text(g.topic, ''),
+          permission: text(g.permission, ''),
+        };
+      }),
+      allowed
+    ),
   };
   if (typeof source.tier === 'string') view.tier = source.tier;
   return view;
+}
+
+/**
+ * Restates an account's grants in terms of `NTFY_TOPICS`.
+ *
+ * A grant pattern is a topic name, and on ntfy a topic name is a bearer
+ * credential — so an unfiltered `/v1/users` answers "which topics exist on this
+ * instance" for every one of them, which is the question `NTFY_TOPICS` exists to
+ * keep this server from answering. Each grant is therefore reported against the
+ * allowed topics it actually covers, and one that covers none of them is
+ * dropped: the account still appears, with the access it has to the topics this
+ * server may know about.
+ *
+ * Two patterns can cover the same allowed topic — `deploy*` and `deploys` — and
+ * both entries are kept. Which of them ntfy applies is its own precedence rule,
+ * and a projection that picked one would be inventing an answer.
+ */
+function projectGrants(
+  grants: { topic: string; permission: string }[],
+  allowed: readonly string[]
+): { topic: string; permission: string }[] {
+  if (allowed.length === 0) return grants;
+  const projected: { topic: string; permission: string }[] = [];
+  for (const grant of grants) {
+    for (const topic of allowed) {
+      if (grantMatches(grant.topic, topic)) {
+        projected.push({ topic, permission: grant.permission });
+      }
+    }
+  }
+  return projected;
 }
 
 /**
@@ -467,27 +512,62 @@ function grantMatches(pattern: string, topic: string): boolean {
 }
 
 /**
- * Removes the credentials `GET /v1/account` hands out.
+ * The keys of `GET /v1/account` this tool is about: who the credentials are,
+ * what they may do, and how much of their quota is used.
+ */
+const ACCOUNT_FIELDS = [
+  'username',
+  'role',
+  'tier',
+  'limits',
+  'stats',
+  'language',
+] as const;
+
+/** The metadata of an access token — everything except its value. */
+const TOKEN_FIELDS = ['label', 'last_access', 'expires'] as const;
+
+/**
+ * Projects the fields `get_account` is about, rather than spreading whatever
+ * ntfy sent.
  *
- * ntfy returns every access token of the account in plaintext — verified
- * against 2.19.2. Putting a live credential into the model's context, and
- * therefore into the transcript, is exactly the leak this server exists to
- * avoid. `sync_topic` goes too: it is a topic name, which on ntfy is a bearer
- * secret, and no tool here has any use for it.
+ * An allowlist for the same reason {@link toUserView} uses one, and the reason
+ * is sharper here because the account record is the densest personal payload
+ * ntfy has. A denylist that removed the token values and `sync_topic` — the two
+ * that were known to be secret — still passed through `phone_numbers`, `billing`
+ * with its Stripe identifiers, and the `reservations` and `subscriptions`
+ * arrays, each of which is a list of topic names, and a topic name on ntfy is a
+ * bearer credential. None of those is what this tool was asked for, and none of
+ * them has a tool here that uses it.
+ *
+ * `tokens` survives as metadata only: ntfy returns every access token of the
+ * account in plaintext — verified against 2.19.2 — and the value is overwritten
+ * rather than dropped, because a caller seeing no `token` key at all could
+ * reasonably read it as "this entry had none".
+ *
+ * The allowlist is one level deep. `limits` and `stats` are counters and pass
+ * through whole; a future ntfy that hides something inside one of them would get
+ * past this, which is the price of reporting them at all.
  */
 export function redactAccount(account: unknown): unknown {
   if (typeof account !== 'object' || account === null) return account;
   const source = account as Record<string, unknown>;
-  const result: Record<string, unknown> = { ...source };
+  const result: Record<string, unknown> = {};
+
+  for (const field of ACCOUNT_FIELDS) {
+    if (field in source) result[field] = source[field];
+  }
 
   if (Array.isArray(source.tokens)) {
     result.tokens = source.tokens.map((entry) => {
       if (typeof entry !== 'object' || entry === null) return '(redacted)';
-      // Overwrite rather than omit: a caller seeing no `token` key at all
-      // could reasonably read it as "this entry had none".
-      return { ...(entry as Record<string, unknown>), token: '(redacted)' };
+      const token = entry as Record<string, unknown>;
+      const view: Record<string, unknown> = { token: '(redacted)' };
+      for (const field of TOKEN_FIELDS) {
+        if (field in token) view[field] = token[field];
+      }
+      return view;
     });
   }
-  if ('sync_topic' in source) result.sync_topic = '(redacted)';
   return result;
 }

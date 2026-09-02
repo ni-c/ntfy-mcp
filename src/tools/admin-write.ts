@@ -213,7 +213,10 @@ export function registerAdminWriteTools(
         'A pattern may end in "*" to cover a family of topics. "deny" writes ' +
         'an explicit refusal — the only way to carve an exception out of a ' +
         'wildcard grant — whereas "revoke" removes the rule entirely, so a ' +
-        'broader wildcard or the server default applies again.',
+        'broader wildcard or the server default applies again.\n\n' +
+        'Where NTFY_TOPICS restricts this server, the topic must be one of ' +
+        'its entries and a wildcard is refused: a pattern covers topics that ' +
+        'are not on that list.',
       annotations: {
         // Replaces the rule for a user on a topic, and revoking takes access
         // away with no record of what it was.
@@ -238,18 +241,23 @@ export function registerAdminWriteTools(
     },
     async (args, mcp) =>
       run(async () => {
-        // tupleResourceKey, not setResourceKey: these three are positional and
-        // their vocabularies overlap, so sorting them would let a token
-        // approved for one (user, topic) pair execute the reverse pair.
+        // Before the approval, not after it: a pattern the allowlist refuses
+        // must not reach a person as a question. The topic argument is the one
+        // thing here that decides which of the instance's topics a third
+        // account can read or write, so it is bounded exactly like the topic of
+        // a publish — a grant on "*" would otherwise hand out permanent access
+        // to every topic on an instance this server is restricted to one of.
+        const topic = api.resolveTopicPattern(args.topic);
+
         // tupleResourceKey, not setResourceKey: these three are positional and
         // their vocabularies overlap, so sorting them would let a token
         // approved for one (user, topic) pair execute the reverse pair.
         const what =
           args.action === 'revoke'
             ? `remove the access rule for "${args.username}" on topic ` +
-              `"${args.topic}"`
+              `"${topic}"`
             : `set "${args.username}" to ${args.action} on topic ` +
-              `"${args.topic}"`;
+              `"${topic}"`;
         const outcome = await approval.requestApproval(
           server,
           mcp,
@@ -260,7 +268,7 @@ export function registerAdminWriteTools(
               'Access rules take effect immediately for anyone using that account.',
             resourceKey: tupleResourceKey('manage_user_access', [
               args.username,
-              args.topic,
+              topic,
               args.action,
             ]),
             token: args.confirm_token,
@@ -280,11 +288,11 @@ export function registerAdminWriteTools(
         if (args.action === 'revoke') {
           await api.delete('/v1/users/access', {
             username: args.username,
-            topic: args.topic,
+            topic,
           });
           return jsonResult({
             username: args.username,
-            topic: args.topic,
+            topic,
             action: 'revoke',
           });
         }
@@ -292,12 +300,12 @@ export function registerAdminWriteTools(
         const permission = ACCESS_ACTIONS[args.action];
         await api.put('/v1/users/access', {
           username: args.username,
-          topic: args.topic,
+          topic,
           permission,
         });
         return jsonResult({
           username: args.username,
-          topic: args.topic,
+          topic,
           permission,
         });
       })

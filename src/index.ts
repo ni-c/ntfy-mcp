@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   }
   if (config.readOnly) {
     console.error(
-      'ntfy-mcp: NTFY_READ_ONLY=true — write tools are not registered'
+      'ntfy-mcp: NTFY_READ_ONLY is set — write tools are not registered'
     );
   }
   // Printed only when it is off, like the read-only line above. ELICITATION is

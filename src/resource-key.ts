@@ -13,6 +13,10 @@ import { createHash } from 'node:crypto';
  * topic would execute a grant on a different pair that was never shown to
  * anyone.
  *
+ * `update_message` uses it for the weaker version of the same reason: a topic name
+ * and a twelve-character message id are both letters and digits, so a sorted key
+ * would give (topic, id) and (id, topic) the same fingerprint.
+ *
  * Where the targets really are a set — the ids in `delete_messages` — the
  * library's `setResourceKey` is the right one and is what that tool uses.
  */

@@ -19,6 +19,12 @@
  * The tool description is where it belongs; `destructiveHint: true` would put
  * the warning on the wrong axis and make the field mean two things.
  *
+ * That argument covers `publish_message` and stops there. `update_message`
+ * looks like its sibling and is not: from ntfy 2.16 it replaces the
+ * notification on the subscribers' devices, so it takes away content a person
+ * was already shown. It is `destructiveHint: true` by the line above, and
+ * guarded like the other two that are.
+ *
  * `openWorldHint: false`: this server talks to the one ntfy it is configured
  * for. That the notification then travels to whoever subscribes to the topic is
  * ntfy's job, not a property of the tool call.

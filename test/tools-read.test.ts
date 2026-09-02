@@ -262,19 +262,86 @@ describe('get_account', () => {
     expect(text).toContain('"username": "alice"');
   });
 
-  it('redacts the sync topic, which is itself a bearer secret', async () => {
+  it('drops the sync topic, which is itself a bearer secret', async () => {
     const redacted = redactAccount({
       username: 'alice',
       sync_topic: 'st_secret',
     }) as Record<string, unknown>;
-    expect(redacted.sync_topic).toBe('(redacted)');
+    expect('sync_topic' in redacted).toBe(false);
+  });
+
+  it('drops every field this tool is not about, including new ones', async () => {
+    // The regression an allowlist exists for. A denylist removed the two keys
+    // known to be secret and spread the rest, so a personal phone number, the
+    // billing identifiers and the reservation and subscription topic names —
+    // topic names being bearer credentials on ntfy — all reached the
+    // transcript. `moon_phase` stands for the field a newer or forked ntfy
+    // adds: it is dropped without anyone editing this server.
+    const redacted = redactAccount({
+      username: 'alice',
+      role: 'user',
+      phone_numbers: ['+352123456789'],
+      billing: { stripe_customer_id: 'cus_ExampleNotReal' },
+      reservations: [{ topic: 'private-alerts', everyone: 'deny-all' }],
+      subscriptions: [{ id: 'su_1', base_url: '', topic: 'another-secret' }],
+      moon_phase: 'waxing gibbous',
+    }) as Record<string, unknown>;
+
+    expect(redacted).toEqual({ username: 'alice', role: 'user' });
+    const text = JSON.stringify(redacted);
+    expect(text).not.toContain('352123456789');
+    expect(text).not.toContain('cus_ExampleNotReal');
+    expect(text).not.toContain('private-alerts');
+    expect(text).not.toContain('another-secret');
+    expect(text).not.toContain('moon_phase');
+  });
+
+  it('keeps role, tier, limits, stats and language', async () => {
+    // The other half of the allowlist: dropping everything would be safe and
+    // useless. These are what the tool promises.
+    const redacted = redactAccount({
+      username: 'alice',
+      role: 'user',
+      tier: 'pro',
+      limits: { messages: 5000 },
+      stats: { messages: 17 },
+      language: 'en',
+    }) as Record<string, unknown>;
+    expect(redacted).toEqual({
+      username: 'alice',
+      role: 'user',
+      tier: 'pro',
+      limits: { messages: 5000 },
+      stats: { messages: 17 },
+      language: 'en',
+    });
   });
 
   it('leaves an unexpected shape alone', async () => {
     expect(redactAccount(null)).toBeNull();
     expect(redactAccount('nonsense')).toBe('nonsense');
-    expect(redactAccount({ tokens: 'not-an-array' })).toEqual({
-      tokens: 'not-an-array',
+    // Not an array, so not a token list this function understands — and an
+    // allowlist keeps nothing it does not understand.
+    expect(redactAccount({ tokens: 'not-an-array' })).toEqual({});
+  });
+
+  it('keeps a token entry to its metadata and nothing else', async () => {
+    const redacted = redactAccount({
+      tokens: [
+        {
+          token: 'tk_examplenotarealtokenvalue00',
+          label: 'laptop',
+          last_access: 1787820124,
+          expires: 1790412124,
+          origin_ip: '203.0.113.7',
+        },
+      ],
+    }) as { tokens: Record<string, unknown>[] };
+    expect(redacted.tokens[0]).toEqual({
+      token: '(redacted)',
+      label: 'laptop',
+      last_access: 1787820124,
+      expires: 1790412124,
     });
   });
 
@@ -371,5 +438,79 @@ describe('list_users', () => {
     const result = await harness.call('list_users');
     expect(result.isError).not.toBe(true);
     expect(harness.text(result)).toContain('(unknown)');
+  });
+
+  it('reports grants only against the topics NTFY_TOPICS allows', async () => {
+    // /v1/users is the one endpoint that answers "which topics exist on this
+    // instance", and a topic name is a bearer credential. A server restricted
+    // to "alerts" was handing back the names of every other topic on the box.
+    const harness = await connect({ topics: ['alerts'] }, () => [
+      {
+        username: 'ops',
+        role: 'user',
+        grants: [
+          { topic: 'alerts', permission: 'read-write' },
+          { topic: 'payroll-2026', permission: 'read-only' },
+          { topic: 'ceo-private', permission: 'read-write' },
+        ],
+      },
+    ]);
+    const text = harness.text(await harness.call('list_users'));
+    expect(text).toContain('"topic": "alerts"');
+    expect(text).not.toContain('payroll-2026');
+    expect(text).not.toContain('ceo-private');
+    // The account is still there, with the access it has to what we may see.
+    expect(text).toContain('ops');
+  });
+
+  it('restates a wildcard grant as the allowed topics it covers', async () => {
+    // "*" is the case that matters: reported verbatim it says nothing, and
+    // reported as a match it has to name which of our topics it reaches.
+    const harness = await connect({ topics: ['alerts', 'deploys'] }, () => [
+      {
+        username: 'root',
+        role: 'admin',
+        grants: [{ topic: '*', permission: 'read-write' }],
+      },
+    ]);
+    const text = harness.text(await harness.call('list_users'));
+    expect(text).not.toContain('"topic": "*"');
+    expect(text).toContain('"topic": "alerts"');
+    expect(text).toContain('"topic": "deploys"');
+  });
+
+  it('drops an account’s grants entirely when none of them is ours', async () => {
+    const harness = await connect({ topics: ['alerts'] }, () => [
+      {
+        username: 'stranger',
+        role: 'user',
+        grants: [{ topic: 'elsewhere', permission: 'read-write' }],
+      },
+    ]);
+    const text = harness.text(await harness.call('list_users'));
+    expect(text).toContain('stranger');
+    expect(text).not.toContain('elsewhere');
+    expect(text).toContain('"grants": []');
+  });
+
+  it('leaves the patterns alone when nothing restricts the server', async () => {
+    // Without NTFY_TOPICS there is nothing to project onto, and "who can write
+    // to what" is the question this tool exists to answer.
+    const harness = await connect({}, () => [
+      {
+        username: 'ops',
+        role: 'user',
+        grants: [{ topic: 'deploy*', permission: 'write-only' }],
+      },
+    ]);
+    expect(harness.text(await harness.call('list_users'))).toContain('deploy*');
+  });
+
+  it('bounds its own topic filter like every other topic argument', async () => {
+    const harness = await connect({ topics: ['alerts'] }, () => []);
+    const result = await harness.call('list_users', { topic: 'secret' });
+    expect(result.isError).toBe(true);
+    expect(harness.text(result)).toContain('not in NTFY_TOPICS');
+    expect(harness.calls).toHaveLength(0);
   });
 });
