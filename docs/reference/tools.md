@@ -19,6 +19,21 @@ Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHin
 `idempotentHint`, `openWorldHint`. `openWorldHint` is `false` throughout: this server
 talks to the one ntfy instance it is configured for.
 
+Every tool also declares an `outputSchema` and answers with `structuredContent`
+beside the text block, so a client can use the result without parsing prose. The
+four tools that report what someone else wrote — `list_messages`, `get_message`,
+`get_account`, `list_users` — carry `untrusted: true` and `source: "ntfy"` as
+fields of the object, not only as a sentence in the text: a client that reads the
+structured half and ignores the text would otherwise get a publisher's prose with
+no framing at all. `get_server_info` does not carry the marker, because its
+sections are the instance's own configuration and counters rather than anything a
+third party published.
+
+What this server builds is described exactly; what it passes on from ntfy is
+declared as an object with no fixed shape. The SDK validates every result against
+the schema before it goes out, so a schema stricter than the data would turn an
+upstream release that adds a field into a tool that fails outright.
+
 Every tool that takes a topic falls back to the first entry of `NTFY_TOPICS` when it
 is omitted, and refuses a topic outside that list when it is set. The same list
 bounds the two access tools, which do not take a topic the ordinary way:

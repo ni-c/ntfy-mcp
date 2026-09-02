@@ -650,7 +650,11 @@ describe('manage_user_access', () => {
       topic: 'deploy*',
       action: 'read_only',
     });
-    expect(result.isError).not.toBe(true);
+    // It reached the confirmation, which is as far as an unconfirmed call
+    // goes — the point here is that `deploy*` was not refused by the pattern
+    // check, so what comes back must be the prompt and not the rejection.
+    expect(harness.text(result)).toContain('confirm_token=');
+    expect(harness.text(result)).toContain('deploy*');
   });
 
   it('refuses "*" where NTFY_TOPICS restricts the server', async () => {

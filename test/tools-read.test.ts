@@ -317,11 +317,14 @@ describe('get_account', () => {
     });
   });
 
-  it('leaves an unexpected shape alone', async () => {
-    expect(redactAccount(null)).toBeNull();
-    expect(redactAccount('nonsense')).toBe('nonsense');
-    // Not an array, so not a token list this function understands — and an
-    // allowlist keeps nothing it does not understand.
+  it('keeps nothing from an unexpected shape', async () => {
+    // An allowlist keeps nothing it does not understand — including when the
+    // thing it does not understand is the account body itself. Passing such a
+    // value back verbatim would forward the shape this function exists to
+    // filter, and would not fit the tool's declared output schema either.
+    expect(redactAccount(null)).toEqual({});
+    expect(redactAccount('nonsense')).toEqual({});
+    // Not an array, so not a token list this function understands.
     expect(redactAccount({ tokens: 'not-an-array' })).toEqual({});
   });
 

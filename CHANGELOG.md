@@ -16,6 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result.
+
+  The four tools that report what someone else wrote — `list_messages`,
+  `get_message`, `get_account`, `list_users` — carry `untrusted: true` and
+  `source: "ntfy"` as fields of the object as well as in the text. A client
+  that reads the structured half and ignores the text would otherwise receive a
+  publisher's title and body with no framing at all, and the framing is the
+  guard. `get_server_info` does not carry the marker: its sections are the
+  instance's own configuration and counters.
+
+  What this server builds is described exactly; what it passes on from ntfy is
+  declared as an object with no fixed shape. The SDK validates every result
+  against the schema before it goes out, so a schema stricter than the data
+  would turn an upstream release that adds a field into a tool that fails
+  outright rather than one that reports a field nobody expected.
+
 - Tools that need a confirmation now **ask the user**, on clients that can show
   a prompt. The two-call `confirm_token` remains for clients that cannot, so
   nothing that works today stops working — but where a person can be asked, one
@@ -54,6 +71,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `docs/guide/approval.md` page.
 
 ### Changed
+
+- `manage_user_access` reports the `action` it was asked for on every outcome,
+  not only on `revoke`. Granting and revoking answered in two different shapes
+  before; the shape is now one.
+
+- `get_account` against an ntfy that answers with something other than a JSON
+  object returns `{}` rather than that value. An allowlist keeps nothing it does
+  not understand, and passing the value back forwarded exactly the shape the
+  allowlist exists to filter.
+
+- The two-call `confirm_token` prompt is an error result. The operation was
+  asked for and did not happen, and a tool that declares an output schema may
+  not answer without `structuredContent` unless the result is an error. The
+  text is unchanged and still carries the token.
 
 - Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they
   always did; the change is the package layout behind it, and it is what lets

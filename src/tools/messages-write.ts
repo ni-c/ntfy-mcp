@@ -24,6 +24,25 @@ import { errorResult, jsonResult, run } from '../result.js';
 const MAX_TOPICS = 10;
 const MAX_IDS = 25;
 
+/**
+ * What the two per-id tools answer with.
+ *
+ * `ok` per entry rather than one verdict for the call, because both tools need
+ * ntfy 2.16 and an older server refuses every id inside a result that is not an
+ * error. The schema puts that in front of a reader who never got as far as the
+ * description.
+ */
+const perIdOutcome = z.object({
+  topic: z.string(),
+  results: z.array(
+    z.object({
+      id: z.string(),
+      ok: z.boolean().describe('Check this per entry, not the call.'),
+      error: z.string().optional(),
+    })
+  ),
+});
+
 /** The content fields shared by publishing and updating. */
 const contentSchema = {
   message: messageBody.optional().describe('The notification body.'),
@@ -150,6 +169,22 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Set false to skip forwarding via Firebase.'),
       }),
+      outputSchema: z.object({
+        published: z.number().int().describe('Topics that accepted it.'),
+        failed: z.number().int().describe('Topics that refused it.'),
+        results: z.array(
+          z.object({
+            topic: z.string(),
+            ok: z.boolean().describe('Check this per entry, not the call.'),
+            id: z.string().optional(),
+            sequence_id: z
+              .string()
+              .optional()
+              .describe('Pass to update_message to revise this notification.'),
+            error: z.string().optional(),
+          })
+        ),
+      }),
     },
     async (args) =>
       run(async () => {
@@ -247,6 +282,13 @@ export function registerMessageWriteTools(
         ...contentSchema,
         confirm_token: confirmTokenParam.optional(),
       }),
+      outputSchema: z.object({
+        topic: z.string(),
+        updated: z.string().describe('The sequence id that was revised.'),
+        revision_id: z
+          .string()
+          .describe('Id of the revision entry the cache now also holds.'),
+      }),
     },
     async (args, mcp) =>
       run(async () => {
@@ -342,6 +384,7 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
       }),
+      outputSchema: perIdOutcome,
     },
     async (args) =>
       run(async () => {
@@ -399,6 +442,7 @@ export function registerMessageWriteTools(
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
         confirm_token: confirmTokenParam.optional(),
       }),
+      outputSchema: perIdOutcome,
     },
     async (args, mcp) =>
       run(async () => {

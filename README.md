@@ -190,6 +190,36 @@ docker run -i --rm \
 👤 asks a person through MCP elicitation · falls back to a two-call
 `confirm_token` where the client cannot show a dialog.
 
+### Structured output
+
+Every tool declares an `outputSchema` and answers with `structuredContent`
+alongside the text block, so a client can use the result without parsing prose:
+
+```jsonc
+{
+  "untrusted": true,
+  "source": "ntfy",
+  "topics": ["alerts"],
+  "count": 2,
+  "next_since": "TmkVCUCmDdWL",
+  "messages": [{ "id": "TmkVCUCmDdWL", "topic": "alerts", "title": "…" }],
+}
+```
+
+The `untrusted` marker is a field and not only a sentence in the text, because a
+client that reads the structured half and ignores the text would otherwise get a
+publisher's prose with no framing at all. It is on the four tools that report
+what someone else wrote: `list_messages`, `get_message`, `get_account` and
+`list_users`. `get_server_info` does not carry it — its sections are the
+instance's own configuration and counters.
+
+Fields this server builds are described exactly; documents it merely passes on
+from ntfy (`/v1/config`, `/v1/stats`, a publisher's attachment metadata) are
+declared as objects with no fixed shape. A schema stricter than the data is not
+a better contract: the SDK validates every result against it, so an upstream
+release that adds a field would take the tool out entirely rather than show you
+one field you did not expect.
+
 ### Two things about ntfy that surprise people
 
 **Read and write are granted separately per topic.** A write-only publishing token

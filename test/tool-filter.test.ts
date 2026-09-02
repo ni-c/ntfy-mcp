@@ -275,6 +275,51 @@ describe('the tools themselves', () => {
     }
   });
 
+  it('declares an output schema on every tool', async () => {
+    // The same argument as the annotations above, one field along. A tool that
+    // says nothing about its result forces a client to parse prose to find out
+    // what it got, and the SDK will not send `structuredContent` for a tool
+    // that declared no schema — so the machine-readable half simply does not
+    // exist until this is here.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      // An object root, not merely a schema. SEP-2106 allows an array or a
+      // scalar, but a 2025-era client is served that same tool with the schema
+      // rewritten to `{result: …}` — so the tool would answer in two different
+      // shapes depending on who asked.
+      expect(tool.outputSchema?.type, tool.name).toBe('object');
+    }
+  });
+
+  it('marks every result built from ntfy content as untrusted', async () => {
+    // The marker has to survive into the structured channel, or a client that
+    // reads only `structuredContent` — which is the point of declaring a schema
+    // at all — gets a publisher's prose with no framing whatsoever.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const marked = tools
+      .filter((tool) => {
+        const properties = tool.outputSchema?.properties as
+          Record<string, unknown> | undefined;
+        return properties?.untrusted !== undefined;
+      })
+      .map((tool) => tool.name)
+      .sort();
+    // get_server_info is deliberately absent: its four sections are the
+    // instance's own configuration and counters, set by whoever runs the server
+    // this client was pointed at — not by a third party who happened to learn a
+    // topic name.
+    expect(marked).toEqual([
+      'get_account',
+      'get_message',
+      'list_messages',
+      'list_users',
+    ]);
+  });
+
   it('does not call publishing destructive', async () => {
     // The one that fits neither half of the rule. Sending a notification
     // destroys nothing, and it reaches people who cannot un-receive it. That

@@ -1,4 +1,5 @@
 import {
+  expectEveryToolDeclaresOutputSchema,
   expectEveryToolExercised,
   startServer,
   toolCoverage,
@@ -261,10 +262,15 @@ describe('the fallback path for a client with no dialog', () => {
       )
     );
 
-    const refusal = await plain.call('delete_messages', {
-      sequence_ids: [published],
-      topic: sandbox.topic,
-    });
+    // An error result: the prompt says the deletion did not happen. It has to
+    // be one — a tool declaring an `outputSchema` may not answer without
+    // `structuredContent` unless the result is an error, and the prompt has
+    // none to give.
+    const refusal = await plain.call(
+      'delete_messages',
+      { sequence_ids: [published], topic: sandbox.topic },
+      { expectError: /confirm_token=/ }
+    );
     expect(refusal).toContain('confirm_token');
     expect(plain.prompts).toHaveLength(0);
 
@@ -292,10 +298,11 @@ describe('the fallback path for a client with no dialog', () => {
       )
     );
 
-    const refusal = await plain.call('delete_messages', {
-      sequence_ids: [first],
-      topic: sandbox.topic,
-    });
+    const refusal = await plain.call(
+      'delete_messages',
+      { sequence_ids: [first], topic: sandbox.topic },
+      { expectError: /confirm_token=/ }
+    );
     const token = /confirm_token="([a-f0-9]{32})"/.exec(refusal)?.[1];
     expect(token).toBeDefined();
 
@@ -327,6 +334,15 @@ describe('the fallback path for a client with no dialog', () => {
     expect(asking.prompts.length).toBeGreaterThan(0);
     expect(plain.prompts).toHaveLength(0);
   });
+});
+
+it('declares an output schema on every tool', async () => {
+  // The unit suite checks the same thing against a stub. Here it is checked
+  // against the server that has just answered every one of these tools with
+  // real ntfy data — and each of those answers went through the SDK's
+  // validation against the schema below, which is the half a stub cannot prove.
+  const { tools } = await asking.client.listTools();
+  expectEveryToolDeclaresOutputSchema(tools);
 });
 
 it('exercises every tool in the catalogue', () => {

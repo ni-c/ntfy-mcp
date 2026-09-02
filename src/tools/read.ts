@@ -1,17 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
+  foreignDocument,
   messageIdParam,
   priorityParam,
   sinceParam,
   tagParam,
   topicParam,
+  untrustedFields,
   usernameParam,
 } from '../schema.js';
 
 import { NtfyApiError, type NtfyApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
-import { buildEnvelope, MAX_RESULT_BYTES, toView } from '../messages.js';
+import {
+  buildEnvelope,
+  MAX_RESULT_BYTES,
+  messageEnvelope,
+  messageView,
+  toView,
+} from '../messages.js';
 import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
 
 const MAX_TOPICS = 10;
@@ -19,6 +27,26 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_USER_LIMIT = 100;
 const MAX_USER_LIMIT = 500;
+
+/**
+ * A section of `get_server_info`, or the note saying why it is absent.
+ *
+ * A union rather than an optional field: "not fetched" and "fetched and empty"
+ * are different answers, and the tool's whole design is that one unavailable
+ * section does not fail the call.
+ */
+const sectionOrUnavailable = z.union([
+  foreignDocument,
+  z.object({ unavailable: z.string() }),
+]);
+
+/** The per-account view `list_users` builds. Mirrors {@link toUserView}. */
+const userView = z.object({
+  username: z.string(),
+  role: z.string(),
+  tier: z.string().optional(),
+  grants: z.array(z.object({ topic: z.string(), permission: z.string() })),
+});
 
 /** A section of `get_server_info` that could not be fetched. */
 interface Unavailable {
@@ -131,6 +159,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
             `Most recent messages to return (default ${DEFAULT_LIMIT}).`
           ),
       }),
+      outputSchema: messageEnvelope.extend(untrustedFields),
     },
     async (args) =>
       run(async () => {
@@ -153,7 +182,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           messages,
           args.limit ?? DEFAULT_LIMIT
         );
-        return untrustedResult(JSON.stringify(envelope, null, 2));
+        return untrustedResult(envelope);
       })
   );
 
@@ -174,6 +203,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
             'Topic to look in. Defaults to the first NTFY_TOPICS entry.'
           ),
       }),
+      outputSchema: messageView.extend(untrustedFields),
     },
     async (args) =>
       run(async () => {
@@ -194,11 +224,13 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         // The same total budget list_messages honours. Without it this tool
         // is the way around the envelope cap: one notification, returned in
         // full, with the fields a publisher chose.
-        let body = JSON.stringify(toView(found, { preview: false }), null, 2);
-        if (Buffer.byteLength(body, 'utf8') > MAX_RESULT_BYTES) {
-          body = JSON.stringify(toView(found, { preview: true }), null, 2);
+        let view = toView(found, { preview: false });
+        if (
+          Buffer.byteLength(JSON.stringify(view), 'utf8') > MAX_RESULT_BYTES
+        ) {
+          view = toView(found, { preview: true });
         }
-        return untrustedResult(body);
+        return untrustedResult(view);
       })
   );
 
@@ -223,6 +255,20 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .describe(
             'Topics to check. Defaults to the first NTFY_TOPICS entry.'
           ),
+      }),
+      outputSchema: z.object({
+        results: z.array(
+          z.object({
+            topic: z.string(),
+            read_access: z.boolean(),
+            status: z
+              .number()
+              .int()
+              .optional()
+              .describe('HTTP status ntfy answered with, on a refusal.'),
+            note: z.string().optional(),
+          })
+        ),
       }),
     },
     async (args) =>
@@ -270,6 +316,22 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'account, so its absence is normal.',
       annotations: READ_ONLY,
       inputSchema: z.object({}),
+      outputSchema: z.object({
+        health: sectionOrUnavailable,
+        config: sectionOrUnavailable,
+        stats: sectionOrUnavailable,
+        version: sectionOrUnavailable,
+        admin_tools_available: z
+          .union([z.boolean(), z.literal('unknown')])
+          .describe('Whether the user and access tools will work.'),
+        authenticated_as: z
+          .string()
+          .describe('The role of the configured credentials, or "unknown".'),
+        topics_restricted_to: z
+          .array(z.string())
+          .nullable()
+          .describe('NTFY_TOPICS, or null when the server is unrestricted.'),
+      }),
     },
     async () =>
       run(async () => {
@@ -338,14 +400,31 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         'timestamps are shown.',
       annotations: READ_ONLY,
       inputSchema: z.object({}),
+      // Every field optional, and the three structured ones untyped. This is
+      // `redactAccount`'s allowlist, which copies what ntfy sent rather than
+      // rebuilding it — so the schema promises only what the allowlist decides,
+      // which is *whether* a field is here, never what is inside it. `tier` is
+      // the concrete reason to be careful: on `/v1/account` it is an object
+      // (`{code, name}`), while on `/v1/users` the same word is a string.
+      outputSchema: z.object({
+        ...untrustedFields,
+        username: z.unknown().optional(),
+        role: z.unknown().optional(),
+        tier: z.unknown().optional(),
+        limits: z.unknown().optional().describe('Quota ceilings of the tier.'),
+        stats: z.unknown().optional().describe('Usage against those ceilings.'),
+        language: z.unknown().optional(),
+        tokens: z
+          .array(z.unknown())
+          .optional()
+          .describe('Access tokens with their value replaced by "(redacted)".'),
+      }),
     },
     async () =>
       run(async () =>
         // Token labels and the tier name are free text somebody typed, so the
         // result is framed as data rather than as this server speaking.
-        untrustedResult(
-          JSON.stringify(redactAccount(await api.account()), null, 2)
-        )
+        untrustedResult(redactAccount(await api.account()))
       )
   );
 
@@ -378,6 +457,13 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           .max(MAX_USER_LIMIT)
           .optional()
           .describe(`Accounts to return (default ${DEFAULT_USER_LIMIT}).`),
+      }),
+      outputSchema: z.object({
+        ...untrustedFields,
+        count: z.number().int().describe('Accounts in this answer.'),
+        total: z.number().int().describe('Accounts that matched the filter.'),
+        note: z.string().optional(),
+        users: z.array(userView),
       }),
     },
     async (args) =>
@@ -416,7 +502,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         // Usernames and grant patterns are instance content, not server
         // metadata: on an instance with signup enabled, anyone on the internet
         // chooses their own username.
-        return untrustedResult(JSON.stringify(payload, null, 2));
+        return untrustedResult(payload);
       })
   );
 }
@@ -549,8 +635,12 @@ const TOKEN_FIELDS = ['label', 'last_access', 'expires'] as const;
  * through whole; a future ntfy that hides something inside one of them would get
  * past this, which is the price of reporting them at all.
  */
-export function redactAccount(account: unknown): unknown {
-  if (typeof account !== 'object' || account === null) return account;
+export function redactAccount(account: unknown): Record<string, unknown> {
+  // An empty object, not the value itself. An allowlist keeps nothing it does
+  // not understand, and a non-object account body has none of these fields to
+  // begin with — returning it verbatim would forward exactly the shape the
+  // allowlist exists to stop, and would not fit the declared output schema.
+  if (typeof account !== 'object' || account === null) return {};
   const source = account as Record<string, unknown>;
   const result: Record<string, unknown> = {};
 

@@ -96,6 +96,13 @@ export function registerAdminWriteTools(
           .describe('Tier name, on an instance that defines tiers.'),
         confirm_token: confirmTokenParam.optional(),
       }),
+      // Note what is not here, for the same reason it is not in the answer:
+      // the password.
+      outputSchema: z.object({
+        created: z.string().describe('The account name.'),
+        role: z.literal('user').describe('The API cannot create an admin.'),
+        note: z.string(),
+      }),
     },
     async (args, mcp) =>
       run(async () => {
@@ -169,6 +176,7 @@ export function registerAdminWriteTools(
         username: usernameParam.describe('The account to remove.'),
         confirm_token: confirmTokenParam.optional(),
       }),
+      outputSchema: z.object({ deleted: z.string() }),
     },
     async (args, mcp) =>
       run(async () => {
@@ -238,6 +246,25 @@ export function registerAdminWriteTools(
           ),
         confirm_token: confirmTokenParam.optional(),
       }),
+      // One shape for both outcomes, not a union. `action` echoes what was
+      // asked for and `permission` is the string ntfy was actually given, which
+      // a revoke does not have — a union of two objects would have no object at
+      // its root, and a 2025-era client is served such a schema wrapped as
+      // `{result: …}`, so the tool would answer in two shapes depending on who
+      // asked.
+      outputSchema: z.object({
+        username: z.string(),
+        topic: z
+          .string()
+          .describe('The pattern, after NTFY_TOPICS resolved it.'),
+        action: z.enum(ACCESS_ACTION_NAMES),
+        permission: z
+          .string()
+          .optional()
+          .describe(
+            'What ntfy stored. Absent on "revoke", which stores no rule.'
+          ),
+      }),
     },
     async (args, mcp) =>
       run(async () => {
@@ -306,6 +333,7 @@ export function registerAdminWriteTools(
         return jsonResult({
           username: args.username,
           topic,
+          action: args.action,
           permission,
         });
       })
