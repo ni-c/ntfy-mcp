@@ -51,8 +51,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "mcp-approval": "^0.7.0",
-    "mcp-tool-allowlist": "^0.2.0",
+    "mcp-approval": "^0.7.1",
+    "mcp-tool-allowlist": "^0.2.1",
     "undici": "^8.10.0",
     "zod": "^4.5.2"
   },
@@ -60,10 +60,10 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.3.0",
     "@vitest/coverage-v8": "4.1.11",
-    "mcp-integration-harness": "^0.1.0",
+    "mcp-integration-harness": "^0.2.0",
     "oxlint": "^1.80.0",
     "prettier": "^3.9.6",
-    "svg-asset-set": "https://github.com/ni-c/svg-asset-set/releases/download/v0.1.0/svg-asset-set-0.1.0.tgz",
+    "svg-asset-set": "https://github.com/ni-c/svg-asset-set/releases/download/v0.2.0/svg-asset-set-0.2.0.tgz",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }
