@@ -93,6 +93,7 @@ jobs:
 
   container-scan:
     needs: test
+    runs-on: ubuntu-latest
     # A container CVE used to be visible only as a red job: Trivy fails the build
     # and uploads nothing, so nothing reaches the Security tab or the API, and a
     # finding existed only for as long as someone was reading CI logs. The scan
