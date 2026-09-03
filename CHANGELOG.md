@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.2.0] - 2026-09-03
 
 ### Added
 
@@ -115,6 +115,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the life of the connection, exactly as a hand-wired
   `StdioServerTransport` served it.
 
+### Fixed
+
+- Confirmation tokens are compared with a **constant-time** comparison. The
+  copy in this repository used `!==`, which leaks through timing how much of a
+  guess was right. Reaching a token still requires having received it in a
+  previous tool result, so this closes a margin rather than a hole.
+
+- A `confirm_token` that does not match is now refused with the reason —
+  invalid, expired, or issued for different arguments — instead of being
+  answered with a fresh prompt. The second is self-healing when a token merely
+  expired and silent when the token was issued for something else, which is the
+  case the binding exists to catch.
+
+- An entry in `NTFY_ALLOW_TOOLS` that is not tool-name-shaped is now
+  **redacted** in the error rather than quoted back. `NTFY_TOKEN` and
+  `NTFY_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste into
+  the wrong one used to print the credential into the client's log.
+
+- A duplicated comment block in `manage_user_access` — the paragraph explaining
+  why its resource key is a tuple appeared twice.
+
 ### Security
 
 - **`NTFY_TOPICS` now bounds the access tools, which it had only claimed to.**
@@ -178,27 +199,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   idempotent in effect, and `publish_message` — the one operation that genuinely
   acts twice — is unguarded and has no idempotency key on ntfy's side. See
   `SECURITY.md`.
-
-### Fixed
-
-- Confirmation tokens are compared with a **constant-time** comparison. The
-  copy in this repository used `!==`, which leaks through timing how much of a
-  guess was right. Reaching a token still requires having received it in a
-  previous tool result, so this closes a margin rather than a hole.
-
-- A `confirm_token` that does not match is now refused with the reason —
-  invalid, expired, or issued for different arguments — instead of being
-  answered with a fresh prompt. The second is self-healing when a token merely
-  expired and silent when the token was issued for something else, which is the
-  case the binding exists to catch.
-
-- An entry in `NTFY_ALLOW_TOOLS` that is not tool-name-shaped is now
-  **redacted** in the error rather than quoted back. `NTFY_TOKEN` and
-  `NTFY_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste into
-  the wrong one used to print the credential into the client's log.
-
-- A duplicated comment block in `manage_user_access` — the paragraph explaining
-  why its resource key is a tuple appeared twice.
 
 ## [0.1.0] - 2026-08-29
 
