@@ -1,19 +1,17 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 
-import type { NtfyApi } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  tupleResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
-import { jsonResult, run, textResult } from '../result.js';
+import { tupleResourceKey } from '../resource-key.js';
 import {
   confirmTokenParam,
   topicPatternParam,
   usernameParam,
 } from '../schema.js';
+
+import type { NtfyApi } from '../api.js';
+import { errorResult, jsonResult, run } from '../result.js';
 
 /**
  * The five unambiguous names this server exposes, mapped to the permission
@@ -57,7 +55,8 @@ void _actionsAgree;
 export function registerAdminWriteTools(
   server: McpServer,
   api: NtfyApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'create_user',
@@ -69,11 +68,21 @@ export function registerAdminWriteTools(
         'new account can reach nothing until you do.\n\n' +
         'The API cannot create administrators; only the ntfy CLI can ' +
         '(`ntfy user add --role=admin`).\n\n' +
+        'Asks a person first; where the client cannot show a dialog, call once ' +
+        'to receive a token and again with it.\n\n' +
         'Be aware that a password passed as a tool argument stays in the ' +
         'conversation transcript. For an account that matters, create it on ' +
         'the server instead.',
-      annotations: { readOnlyHint: false },
-      inputSchema: {
+      annotations: {
+        // Additive: it brings an account into existence. A privilege change
+        // rather than a destruction — which is why it is guarded, not why it
+        // would be destructive.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         username: usernameParam.describe('The account name.'),
         password: z
           .string()
@@ -85,10 +94,50 @@ export function registerAdminWriteTools(
           .max(64)
           .optional()
           .describe('Tier name, on an instance that defines tiers.'),
-      },
+        confirm_token: confirmTokenParam.optional(),
+      }),
+      // Note what is not here, for the same reason it is not in the answer:
+      // the password.
+      outputSchema: z.object({
+        created: z.string().describe('The account name.'),
+        role: z.literal('user').describe('The API cannot create an admin.'),
+        note: z.string(),
+      }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
+        // The mirror image of delete_user, which is guarded: bringing an
+        // account into existence is a change to who may reach this instance,
+        // and the annotation cannot say that — destructiveHint is about what a
+        // call takes away, and this takes nothing away.
+        //
+        // The password is in neither the key nor the text. It is a live
+        // credential and both of those are read back: the key would put it in
+        // the fallback token's binding, and the text in front of a person and
+        // a model.
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `create the account "${args.username}"`,
+            consequence:
+              'It becomes an account on this instance. Nothing is reachable ' +
+              'through it until manage_user_access grants a topic — but ' +
+              'whoever has the password can then authenticate as it.',
+            resourceKey: setResourceKey('create_user', [args.username]),
+            token: args.confirm_token,
+            toolName: 'create_user',
+            title: `Create the account "${args.username}"?`,
+            hint: 'Tick to create it, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. create_user did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+
         const body: Record<string, unknown> = {
           username: args.username,
           password: args.password,
@@ -114,26 +163,46 @@ export function registerAdminWriteTools(
         'Removes an account and every access grant attached to it. Requires ' +
         'an admin account and a confirmation token: call once without it to ' +
         'receive the token, then again with it.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+      annotations: {
+        // Idempotent by the specification's wording — the second call fails,
+        // but the world is the same either way. Every access grant attached
+        // to the account goes with it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         username: usernameParam.describe('The account to remove.'),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
+      outputSchema: z.object({ deleted: z.string() }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
-        const key = setResourceKey('delete_user', [args.username]);
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `delete the account "${args.username}" and all of its topic ` +
-                'access grants',
-              token,
-              confirmations.ttlMinutes
-            )
-          );
+              'access grants',
+            consequence:
+              'The account and every access grant attached to it are removed.',
+            resourceKey: setResourceKey('delete_user', [args.username]),
+            token: args.confirm_token,
+            toolName: 'delete_user',
+            title: `Delete the account "${args.username}"?`,
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_user did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
+
         await api.delete('/v1/users', { username: args.username });
         return jsonResult({ deleted: args.username });
       })
@@ -152,9 +221,19 @@ export function registerAdminWriteTools(
         'A pattern may end in "*" to cover a family of topics. "deny" writes ' +
         'an explicit refusal — the only way to carve an exception out of a ' +
         'wildcard grant — whereas "revoke" removes the rule entirely, so a ' +
-        'broader wildcard or the server default applies again.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+        'broader wildcard or the server default applies again.\n\n' +
+        'Where NTFY_TOPICS restricts this server, the topic must be one of ' +
+        'its entries and a wildcard is refused: a pattern covers topics that ' +
+        'are not on that list.',
+      annotations: {
+        // Replaces the rule for a user on a topic, and revoking takes access
+        // away with no record of what it was.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         username: usernameParam.describe('The account to change.'),
         topic: topicPatternParam.describe(
           'A topic name, or a prefix ending in "*".'
@@ -166,39 +245,81 @@ export function registerAdminWriteTools(
               'revoke (remove the rule).'
           ),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
+      // One shape for both outcomes, not a union. `action` echoes what was
+      // asked for and `permission` is the string ntfy was actually given, which
+      // a revoke does not have — a union of two objects would have no object at
+      // its root, and a 2025-era client is served such a schema wrapped as
+      // `{result: …}`, so the tool would answer in two shapes depending on who
+      // asked.
+      outputSchema: z.object({
+        username: z.string(),
+        topic: z
+          .string()
+          .describe('The pattern, after NTFY_TOPICS resolved it.'),
+        action: z.enum(ACCESS_ACTION_NAMES),
+        permission: z
+          .string()
+          .optional()
+          .describe(
+            'What ntfy stored. Absent on "revoke", which stores no rule.'
+          ),
+      }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
+        // Before the approval, not after it: a pattern the allowlist refuses
+        // must not reach a person as a question. The topic argument is the one
+        // thing here that decides which of the instance's topics a third
+        // account can read or write, so it is bounded exactly like the topic of
+        // a publish — a grant on "*" would otherwise hand out permanent access
+        // to every topic on an instance this server is restricted to one of.
+        const topic = api.resolveTopicPattern(args.topic);
+
         // tupleResourceKey, not setResourceKey: these three are positional and
         // their vocabularies overlap, so sorting them would let a token
         // approved for one (user, topic) pair execute the reverse pair.
-        const key = tupleResourceKey('manage_user_access', [
-          args.username,
-          args.topic,
-          args.action,
-        ]);
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          const what =
-            args.action === 'revoke'
-              ? `remove the access rule for "${args.username}" on topic ` +
-                `"${args.topic}"`
-              : `set "${args.username}" to ${args.action} on topic ` +
-                `"${args.topic}"`;
-          return textResult(
-            confirmationPrompt(what, token, confirmations.ttlMinutes)
+        const what =
+          args.action === 'revoke'
+            ? `remove the access rule for "${args.username}" on topic ` +
+              `"${topic}"`
+            : `set "${args.username}" to ${args.action} on topic ` +
+              `"${topic}"`;
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: what,
+            consequence:
+              'Access rules take effect immediately for anyone using that account.',
+            resourceKey: tupleResourceKey('manage_user_access', [
+              args.username,
+              topic,
+              args.action,
+            ]),
+            token: args.confirm_token,
+            toolName: 'manage_user_access',
+            title: 'Change this access rule?',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(
+            `The user declined. manage_user_access did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         if (args.action === 'revoke') {
           await api.delete('/v1/users/access', {
             username: args.username,
-            topic: args.topic,
+            topic,
           });
           return jsonResult({
             username: args.username,
-            topic: args.topic,
+            topic,
             action: 'revoke',
           });
         }
@@ -206,12 +327,13 @@ export function registerAdminWriteTools(
         const permission = ACCESS_ACTIONS[args.action];
         await api.put('/v1/users/access', {
           username: args.username,
-          topic: args.topic,
+          topic,
           permission,
         });
         return jsonResult({
           username: args.username,
-          topic: args.topic,
+          topic,
+          action: args.action,
           permission,
         });
       })

@@ -1,4 +1,7 @@
+import { z } from 'zod';
+
 import type { NtfyMessage } from './api.js';
+import { anyJsonValue } from './schema.js';
 
 /** Total response budget for a tool result, before the untrusted-data marker. */
 export const MAX_RESULT_BYTES = 200_000;
@@ -13,7 +16,7 @@ export const PREVIEW_CHARS = 500;
  * ntfy limits the message body to 4096 bytes, and rejects an oversized JSON
  * publish with `41303 JSON body too large`. It does not limit the title, the
  * tag list or the action list on the header form of the publish API: verified
- * against 2.27.0, where a 60 000-character `X-Title` was accepted and a single
+ * against 2.19.2, where a 60 000-character `X-Title` was accepted and a single
  * poll of that topic returned 80 kB. Anyone who can publish to a topic can
  * therefore choose how much of the reader's context one notification occupies.
  */
@@ -38,29 +41,47 @@ function cap(value: string): string {
     : value;
 }
 
-export interface MessageView {
-  id: string;
+/**
+ * One notification, as this server reports it.
+ *
+ * The schema and not the interface is the definition, and `MessageView` is
+ * derived from it. Two things are true at once here: this projection is what
+ * `list_messages` and `get_message` advertise as their output schema, and it is
+ * validated against the real answer before that answer goes out. A hand-written
+ * interface next to a hand-written schema would drift, and the drift would
+ * surface as a *failed tool call* rather than a type error — the SDK rejects a
+ * result its schema does not accept.
+ *
+ * Everything a publisher controls is typed loosely on purpose. `actions` is
+ * arbitrary JSON that ntfy neither validates nor bounds, so `z.unknown()`: a
+ * publisher who sends `actions: ["oops"]` would otherwise take the tool down
+ * rather than have their nonsense reported.
+ */
+export const messageView = z.object({
+  id: z.string(),
   /** Set when this entry updates, clears or deletes an earlier notification. */
-  updates?: string;
-  event: string;
-  topic: string;
-  time: string;
-  title?: string;
-  message?: string;
+  updates: z.string().optional(),
+  event: z.string(),
+  topic: z.string(),
+  time: z.string().describe('ISO 8601, converted from ntfy’s Unix seconds.'),
+  title: z.string().optional(),
+  message: z.string().optional(),
   /** Only on a preview that was cut. */
-  message_truncated?: true;
+  message_truncated: z.literal(true).optional(),
   /** Set when the publisher supplied more tags than are shown. */
-  tags_truncated?: true;
+  tags_truncated: z.literal(true).optional(),
   /** Set when action buttons or attachment metadata were dropped for size. */
-  oversized?: true;
-  priority?: number;
-  tags?: string[];
-  click?: string;
-  icon?: string;
-  actions?: unknown[];
-  attachment?: unknown;
-  content_type?: string;
-}
+  oversized: z.literal(true).optional(),
+  priority: z.number().optional(),
+  tags: z.array(z.string()).optional(),
+  click: z.string().optional(),
+  icon: z.string().optional(),
+  actions: z.array(anyJsonValue).optional(),
+  attachment: anyJsonValue.optional(),
+  content_type: z.string().optional(),
+});
+
+export type MessageView = z.infer<typeof messageView>;
 
 /**
  * Reshapes a raw ntfy message for a tool result.
@@ -119,18 +140,28 @@ export function toView(
   return view;
 }
 
-export interface MessageEnvelope {
-  topics: readonly string[];
-  count: number;
+/** What `list_messages` answers with. Derived, for the reason above. */
+export const messageEnvelope = z.object({
+  topics: z.array(z.string()),
+  count: z.number().int(),
   /**
    * Cursor for the next call. `since=<id>` is exclusive, verified against
-   * 2.27.0, so passing this back returns strictly newer messages.
+   * 2.19.2, so passing this back returns strictly newer messages.
    */
-  next_since?: string;
-  note?: string;
-  dropped?: number;
-  messages: MessageView[];
-}
+  next_since: z
+    .string()
+    .optional()
+    .describe('Pass back as "since" to get only what arrived after this call.'),
+  note: z.string().optional(),
+  dropped: z
+    .number()
+    .int()
+    .optional()
+    .describe('Messages left out to stay inside the result budget.'),
+  messages: z.array(messageView),
+});
+
+export type MessageEnvelope = z.infer<typeof messageEnvelope>;
 
 /**
  * Builds the envelope, dropping whole messages until it fits the budget.
@@ -149,7 +180,7 @@ export function buildEnvelope(
   const last = messages[messages.length - 1];
 
   const envelope: MessageEnvelope = {
-    topics,
+    topics: [...topics],
     count: considered.length,
     messages: considered.map((message) => toView(message, { preview: true })),
   };

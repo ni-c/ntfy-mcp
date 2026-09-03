@@ -65,7 +65,7 @@ export interface NtfyMessage {
   id: string;
   /**
    * Present only on follow-up events; on the original publish the message's own
-   * `id` *is* its sequence id. Verified against 2.27.0.
+   * `id` *is* its sequence id. Verified against 2.19.2.
    */
   sequence_id?: string;
   time: number;
@@ -128,6 +128,12 @@ export class NtfyApi {
    * context on the way in. When the allowlist is set it also bounds every tool,
    * read and write: without it, an injected instruction could publish what it
    * just polled to a topic of the attacker's choosing on the same instance.
+   *
+   * "Every tool" includes the account tools, which do not go through here:
+   * `manage_user_access` takes a pattern rather than a name and so uses
+   * {@link resolveTopicPattern}, and `list_users` returns grants rather than
+   * taking a topic, so it projects them onto {@link allowedTopics} on the way
+   * out.
    */
   resolveTopic(topic: string | undefined): string {
     const allowed = this.config.topics;
@@ -163,6 +169,48 @@ export class NtfyApi {
       );
     }
     return topic;
+  }
+
+  /**
+   * Resolves the topic *pattern* of an access grant against `NTFY_TOPICS`.
+   *
+   * A grant is not a request for one topic: `deploy*` hands an account every
+   * topic on the instance whose name starts with "deploy", and `*` hands it all
+   * of them, including the ones that will only exist tomorrow. So the test
+   * cannot be "does the pattern match something allowed" — it has to be "is
+   * everything this pattern can ever cover allowed", and no finite `NTFY_TOPICS`
+   * is a superset of any wildcard. With the allowlist set, a wildcard is
+   * therefore always refused and a plain name goes through {@link resolveTopic}
+   * like any other topic.
+   *
+   * Without an allowlist nothing is bounded and the pattern passes untouched —
+   * the same shape as {@link resolveTopic}, where an unset `NTFY_TOPICS` means
+   * no restriction rather than no access.
+   */
+  resolveTopicPattern(pattern: string): string {
+    // Re-checked here for the same reason resolveTopic re-checks its argument:
+    // this is the last thing between a caller-supplied string and a request
+    // body, and a new tool that forgets the zod schema should not also lose the
+    // bound below.
+    if (!/^[-_A-Za-z0-9*]{1,64}$/.test(pattern)) {
+      throw new Error(
+        `"${pattern}" is not a valid ntfy topic pattern — 1 to 64 characters ` +
+          'of letters, digits, "-", "_" and "*"'
+      );
+    }
+    const allowed = this.config.topics;
+    if (allowed.length === 0) return pattern;
+    if (pattern.includes('*')) {
+      // Names the count rather than the topics, like resolveTopic: this string
+      // ends up in the host's log file.
+      throw new Error(
+        `topic pattern "${pattern}" would grant access beyond NTFY_TOPICS, ` +
+          `which restricts this server to ${allowed.length} topic(s) — a ` +
+          'wildcard covers topics that are not on that list, including ones ' +
+          'that do not exist yet. Name a single topic instead.'
+      );
+    }
+    return this.resolveTopic(pattern);
   }
 
   private authHeader(): string | undefined {
@@ -365,7 +413,7 @@ export class NtfyApi {
    * `POST /` with the JSON body is used for both. The other documented update
    * route, `POST /{topic}/{sequence_id}`, follows the raw-body convention: it
    * would publish the JSON document as the literal message text, which is what
-   * a first attempt against 2.27.0 actually did.
+   * a first attempt against 2.19.2 actually did.
    */
   publish(body: Record<string, unknown>): Promise<unknown> {
     return this.post('/', body);

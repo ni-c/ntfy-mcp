@@ -1,6 +1,5 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { vi } from 'vitest';
 
 import type { Config } from '../src/config.js';
@@ -17,6 +16,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     topics: [],
     insecureTls: false,
     readOnly: false,
+    elicitation: true,
     allowTools: undefined,
     denyTools: undefined,
     ...overrides,
@@ -68,9 +68,14 @@ export function ndjson(lines: unknown[]): Response {
   });
 }
 
+/** How a client that can show a dialog answers it. */
+export type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
+
 export interface Harness {
   client: Client;
   calls: Recorded[];
+  /** Every message the server put in front of the user, in order. */
+  prompts: string[];
   call: (
     name: string,
     args?: Record<string, unknown>
@@ -81,11 +86,27 @@ export interface Harness {
 /** Connects an SDK client to an in-process server. */
 export async function connect(
   overrides: Partial<Config> = {},
-  respond?: (request: Recorded) => unknown
+  respond?: (request: Recorded) => unknown,
+  // Omitted means the client declares no elicitation capability, which is the
+  // case the two-call token exists for and what every other test here drives.
+  elicit?: ElicitBehaviour
 ): Promise<Harness> {
   const calls = stubFetch(respond);
   const server = createServer(testConfig(overrides));
-  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const prompts: string[] = [];
+  const client = new Client(
+    { name: 'test-client', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', (request) => {
+      const params = request.params as { message?: string };
+      prompts.push(params.message ?? '');
+      if (elicit === 'cancel') return { action: 'cancel' };
+      if (elicit === 'decline') return { action: 'decline' };
+      return { action: 'accept', content: { confirm: true } };
+    });
+  }
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await Promise.all([
@@ -95,6 +116,7 @@ export async function connect(
   return {
     client,
     calls,
+    prompts,
     call: (name, args = {}) =>
       client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
     text: (result) =>
@@ -111,4 +133,42 @@ export async function toolNames(
   const { client } = await connect(overrides);
   const { tools } = await client.listTools();
   return tools.map((tool) => tool.name).sort();
+}
+
+/** The confirmation token a guarded tool handed back on its first call. */
+export function tokenOf(text: string): string {
+  const match = /confirm_token="([a-f0-9]{32})"/.exec(text);
+  if (!match?.[1]) {
+    throw new Error(
+      `no confirm_token in the result — did the client declare elicitation? ` +
+        `Got: ${text.slice(0, 300)}`
+    );
+  }
+  return match[1];
+}
+
+/**
+ * Runs a guarded tool through both halves of its two-call token.
+ *
+ * Takes the client rather than living on the harness, so the signature matches
+ * every other repository in this family. Only meaningful on a client that
+ * declared no elicitation: with a dialog available the server asks instead of
+ * offering a token, which is the point of the dialog.
+ */
+export async function confirmed(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {}
+): Promise<CallToolResult> {
+  const first = (await client.callTool({
+    name,
+    arguments: args,
+  })) as CallToolResult;
+  const text = (first.content as { text?: string }[])
+    .map((part) => part.text ?? '')
+    .join('\n');
+  return client.callTool({
+    name,
+    arguments: { ...args, confirm_token: tokenOf(text) },
+  }) as Promise<CallToolResult>;
 }

@@ -57,6 +57,11 @@ export const ALL_TOOLS: readonly string[] = [...READ_TOOLS, ...WRITE_TOOLS];
  * and `mark_messages_read`, which is a triage nicety rather than part of the
  * main task.
  *
+ * `update_message` stays despite being guarded. The preset is about which tools
+ * exist, and the guard is about whether a person is asked before one acts — a
+ * gated tool in the preset asks, it does not fail. Dropping it would leave the
+ * story ending at "send" with no way to correct what was sent.
+ *
  * `test/tool-filter.test.ts` checks every name here exists and that the list is
  * within 5..8.
  */

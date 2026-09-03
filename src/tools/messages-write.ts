@@ -1,13 +1,7 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import type { NtfyApi, NtfyMessage } from '../api.js';
-import {
-  confirmationPrompt,
-  setResourceKey,
-  type ConfirmationStore,
-} from '../confirm.js';
-import { errorResult, jsonResult, run, textResult } from '../result.js';
+import { setResourceKey } from 'mcp-approval';
+import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   actionSchema,
   confirmTokenParam,
@@ -23,8 +17,31 @@ import {
   topicParam,
 } from '../schema.js';
 
+import type { NtfyApi, NtfyMessage } from '../api.js';
+import { tupleResourceKey } from '../resource-key.js';
+import { errorResult, jsonResult, run } from '../result.js';
+
 const MAX_TOPICS = 10;
 const MAX_IDS = 25;
+
+/**
+ * What the two per-id tools answer with.
+ *
+ * `ok` per entry rather than one verdict for the call, because both tools need
+ * ntfy 2.16 and an older server refuses every id inside a result that is not an
+ * error. The schema puts that in front of a reader who never got as far as the
+ * description.
+ */
+const perIdOutcome = z.object({
+  topic: z.string(),
+  results: z.array(
+    z.object({
+      id: z.string(),
+      ok: z.boolean().describe('Check this per entry, not the call.'),
+      error: z.string().optional(),
+    })
+  ),
+});
 
 /** The content fields shared by publishing and updating. */
 const contentSchema = {
@@ -91,7 +108,8 @@ function contentBody(args: ContentArgs): Record<string, unknown> {
 export function registerMessageWriteTools(
   server: McpServer,
   api: NtfyApi,
-  confirmations: ConfirmationStore
+  confirmations: ConfirmationStore,
+  approval: Approver
 ): void {
   server.registerTool(
     'publish_message',
@@ -106,8 +124,16 @@ export function registerMessageWriteTools(
         "The returned id is also the notification's sequence id: pass it to " +
         'update_message to revise this notification in place, which is how a ' +
         'progress report stays one notification instead of five.',
-      annotations: { readOnlyHint: false },
-      inputSchema: {
+      annotations: {
+        // Destroys nothing, and reaches people who cannot un-receive it.
+        // That is an outbound effect, not a destructive one, and no annotation
+        // carries it — the description does. Each call sends again.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         topics: z
           .array(topicParam)
           .min(1)
@@ -142,7 +168,23 @@ export function registerMessageWriteTools(
           .boolean()
           .optional()
           .describe('Set false to skip forwarding via Firebase.'),
-      },
+      }),
+      outputSchema: z.object({
+        published: z.number().int().describe('Topics that accepted it.'),
+        failed: z.number().int().describe('Topics that refused it.'),
+        results: z.array(
+          z.object({
+            topic: z.string(),
+            ok: z.boolean().describe('Check this per entry, not the call.'),
+            id: z.string().optional(),
+            sequence_id: z
+              .string()
+              .optional()
+              .describe('Pass to update_message to revise this notification.'),
+            error: z.string().optional(),
+          })
+        ),
+      }),
     },
     async (args) =>
       run(async () => {
@@ -214,9 +256,23 @@ export function registerMessageWriteTools(
         'for cached messages: one published with "cache": false cannot be ' +
         'updated. Only the fields given are sent; the cache keeps each ' +
         'revision as its own entry pointing back at the original, which is why ' +
-        'list_messages shows them with an "updates" field.',
-      annotations: { readOnlyHint: false },
-      inputSchema: {
+        'list_messages shows them with an "updates" field — the original keeps ' +
+        'its old text and a second entry carries the new one.\n\n' +
+        'Needs ntfy 2.16.0 or newer, and the failure below that is silent: an ' +
+        'older server simply publishes a **new notification** instead of ' +
+        'revising the old one, and answers success. If subscribers report ' +
+        'receiving two, that is why — check get_server_info for the version.\n\n' +
+        'Asks a person first; where the client cannot show a dialog, call once ' +
+        'to receive a token and again with it.',
+      annotations: {
+        // Replaces the fields of a message somebody already received a copy
+        // of. What was there is not recoverable.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         sequence_id: messageIdParam.describe(
           'Id of the notification to revise, as returned by publish_message.'
         ),
@@ -224,15 +280,68 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Its topic. Defaults to the first NTFY_TOPICS entry.'),
         ...contentSchema,
-      },
+        confirm_token: confirmTokenParam.optional(),
+      }),
+      outputSchema: z.object({
+        topic: z.string(),
+        updated: z.string().describe('The sequence id that was revised.'),
+        revision_id: z
+          .string()
+          .describe('Id of the revision entry the cache now also holds.'),
+      }),
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const topic = api.resolveTopic(args.topic);
         const body = contentBody(args);
         if (Object.keys(body).length === 0) {
           return errorResult('Provide at least one field to change.');
         }
+
+        // Gated like delete_messages, and for the same reason rather than by
+        // analogy: from ntfy 2.16 this replaces the notification *on the
+        // subscribers' devices*, so the text they were shown is gone with no
+        // copy anywhere but this server's cache. It also carries the whole
+        // content schema, which includes `actions` — an "http" button fires
+        // from the recipient's phone with a method, headers and body chosen
+        // here. Turning a delivered alert into a button that calls something is
+        // not what publish_message's unguarded outbound-effect argument covers.
+        //
+        // tupleResourceKey, not setResourceKey: a topic name and a message id
+        // are both letters and digits, so a sorted key would let a
+        // confirmation for one execute the pair the other way round.
+        //
+        // The content is not in the key. What is confirmed is "revise this
+        // notification", and binding the new text would mean a person had to be
+        // asked again for every corrected typo while proving nothing — the
+        // replacement is only reachable through the same tool call.
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
+              `replace the content of notification "${args.sequence_id}" on ` +
+              `topic "${topic}"`,
+            consequence:
+              'Subscribers who already received it see it change in place, ' +
+              'and the text they were shown is not recoverable.',
+            resourceKey: tupleResourceKey('update_message', [
+              topic,
+              args.sequence_id,
+            ]),
+            token: args.confirm_token,
+            toolName: 'update_message',
+            title: 'Revise this notification?',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. update_message did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+
         const updated = (await api.publish({
           ...body,
           topic,
@@ -252,9 +361,20 @@ export function registerMessageWriteTools(
       title: 'Mark notifications read',
       description:
         "Clears notifications on subscribers' devices. The messages stay in " +
-        'the server cache and remain readable with list_messages.',
-      annotations: { readOnlyHint: false },
-      inputSchema: {
+        'the server cache and remain readable with list_messages — that is the ' +
+        'whole difference from delete_messages, which also leaves them there ' +
+        'but tells subscribers to remove rather than to clear.\n\n' +
+        'Needs ntfy 2.16.0 or newer. Against an older server every id comes ' +
+        'back with ok:false inside a result that is not an error — check the ' +
+        'per-id results rather than only whether the call succeeded.',
+      annotations: {
+        // A marker, and ntfy keeps the message either way.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
           .min(1)
@@ -263,7 +383,8 @@ export function registerMessageWriteTools(
         topic: topicParam
           .optional()
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
-      },
+      }),
+      outputSchema: perIdOutcome,
     },
     async (args) =>
       run(async () => {
@@ -292,9 +413,25 @@ export function registerMessageWriteTools(
       description:
         'Deletes notifications and cancels scheduled ones that have not been ' +
         'delivered yet. Requires a confirmation token: call once without it to ' +
-        'receive the token, then again with it.',
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
+        'receive the token, then again with it.\n\n' +
+        '"Deleted" means subscribers are told to remove their copy. ntfy ' +
+        'publishes a message_delete event and does **not** remove anything ' +
+        'from its own cache, so list_messages and get_message still return the ' +
+        'message afterwards, until it expires. Do not read that as the delete ' +
+        'having failed, and do not delete again: the delete event is in the ' +
+        'list too, alongside the message it refers to.\n\n' +
+        'Needs ntfy 2.16.0 or newer. Against an older server every id comes ' +
+        'back with ok:false inside a result that is not an error — check the ' +
+        'per-id results rather than only whether the call succeeded.',
+      annotations: {
+        // Deleted notifications do not come back, and scheduled ones are not
+        // sent. Idempotent: deleting the same ids twice leaves the same topic.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      inputSchema: z.object({
         sequence_ids: z
           .array(messageIdParam)
           .min(1)
@@ -304,28 +441,39 @@ export function registerMessageWriteTools(
           .optional()
           .describe('Their topic. Defaults to the first NTFY_TOPICS entry.'),
         confirm_token: confirmTokenParam.optional(),
-      },
+      }),
+      outputSchema: perIdOutcome,
     },
-    async (args) =>
+    async (args, mcp) =>
       run(async () => {
         const topic = api.resolveTopic(args.topic);
         // Fingerprinted over the exact set, so a token issued for one id cannot
         // execute a longer list the model chose afterwards.
-        const key = setResourceKey(
-          'delete_messages',
-          args.sequence_ids.map((id) => `${topic}/${id}`)
-        );
-        if (!confirmations.consume(key, args.confirm_token)) {
-          const token = confirmations.issue(key);
-          return textResult(
-            confirmationPrompt(
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what:
               `delete ${args.sequence_ids.length} notification(s) from topic ` +
-                `"${topic}", including any that are still scheduled`,
-              token,
-              confirmations.ttlMinutes
-            )
-          );
+              `"${topic}", including any that are still scheduled`,
+            consequence:
+              'Deleted notifications cannot be recovered, and scheduled ones will not be sent.',
+            resourceKey: setResourceKey(
+              'delete_messages',
+              args.sequence_ids.map((id) => `${topic}/${id}`)
+            ),
+            token: args.confirm_token,
+            toolName: 'delete_messages',
+            title: `Delete ${args.sequence_ids.length} notification(s)?`,
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_messages did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
 
         const results = [];
         for (const id of args.sequence_ids) {

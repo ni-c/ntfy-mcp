@@ -8,13 +8,37 @@ Beyond that, `NTFY_ALLOW_TOOLS` and `NTFY_DENY_TOOLS` narrow the list, and
 `NTFY_ALLOW_TOOLS=essential` selects the six marked **essential** below — see
 [choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
 
-Three tools require a **confirmation token**: `delete_messages`, `delete_user` and
-`manage_user_access`. Each is refused on the first call and answered with a
-short-lived, single-use token bound to the exact target; a second call carrying that
-token performs the operation. See [Security](/guide/security#confirmation-tokens).
+Five tools marked 👤 **ask a person** before they act: `delete_messages`,
+`delete_user`, `manage_user_access`, `create_user` and `update_message`. Where the
+MCP client supports elicitation that is a dialog the model cannot answer on its
+behalf; where it does not, the tool falls back to a short-lived, single-use
+`confirm_token` bound to the exact target. `ELICITATION=false` takes that fallback deliberately. See
+[Asking a person](/guide/approval).
+
+Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`. `openWorldHint` is `false` throughout: this server
+talks to the one ntfy instance it is configured for.
+
+Every tool also declares an `outputSchema` and answers with `structuredContent`
+beside the text block, so a client can use the result without parsing prose. The
+four tools that report what someone else wrote — `list_messages`, `get_message`,
+`get_account`, `list_users` — carry `untrusted: true` and `source: "ntfy"` as
+fields of the object, not only as a sentence in the text: a client that reads the
+structured half and ignores the text would otherwise get a publisher's prose with
+no framing at all. `get_server_info` does not carry the marker, because its
+sections are the instance's own configuration and counters rather than anything a
+third party published.
+
+What this server builds is described exactly; what it passes on from ntfy is
+declared as an object with no fixed shape. The SDK validates every result against
+the schema before it goes out, so a schema stricter than the data would turn an
+upstream release that adds a field into a tool that fails outright.
 
 Every tool that takes a topic falls back to the first entry of `NTFY_TOPICS` when it
-is omitted, and refuses a topic outside that list when it is set.
+is omitted, and refuses a topic outside that list when it is set. The same list
+bounds the two access tools, which do not take a topic the ordinary way:
+`manage_user_access` refuses a grant pattern that reaches past it — `*` included —
+and `list_users` reports grants against the allowed topics only.
 
 ## At a glance
 
@@ -24,15 +48,15 @@ is omitted, and refuses a topic outside that list when it is set.
 | `get_message`          | read  | **essential** |                                              |
 | `check_topic_access`   | read  | **essential** | tests the read side only                     |
 | `get_server_info`      | read  | **essential** | works before the credentials are right       |
-| `get_account`          | read  | —             | token values redacted                        |
+| `get_account`          | read  | —             | projected to an allowlist of fields          |
 | `list_users`           | read  | —             | admin                                        |
 | `publish_message`      | write | **essential** |                                              |
-| `update_message`       | write | **essential** |                                              |
+| `update_message` 👤    | write | **essential** | asks a person                                |
 | `mark_messages_read`   | write | —             |                                              |
-| `delete_messages`      | write | —             | confirmation token                           |
-| `create_user`          | write | —             | admin                                        |
-| `delete_user`          | write | —             | admin, confirmation token                    |
-| `manage_user_access`   | write | —             | admin, confirmation token                    |
+| `delete_messages` 👤   | write | —             | asks a person                                |
+| `create_user` 👤       | write | —             | admin, asks a person                         |
+| `delete_user` 👤       | write | —             | admin, asks a person                         |
+| `manage_user_access` 👤 | write | —             | admin, asks a person                         |
 
 ## Read tools
 
@@ -116,9 +140,13 @@ The result also carries `admin_tools_available`, `authenticated_as` and
 Identity, role, tier, limits and current usage of the configured credentials. Takes
 no parameters.
 
-**Access token values are redacted** — only their labels and timestamps are shown —
-and so is the account's `sync_topic`, because a topic name is a bearer secret. ntfy
-returns every token of the account in plaintext here.
+**The result is an allowlist, not a filtered copy.** `username`, `role`, `tier`,
+`limits`, `stats`, `language` and the *metadata* of each access token are returned;
+everything else `GET /v1/account` sends is dropped. Access token values are
+overwritten with `(redacted)` — ntfy returns them in plaintext here — and the
+`sync_topic`, `phone_numbers`, `billing`, `reservations` and `subscriptions` fields
+never appear, the last two being lists of topic names and a topic name being a
+bearer secret.
 
 ### list_users
 
@@ -134,6 +162,11 @@ the current one qualifies.
 
 All three are optional. Only `username`, `role`, `tier` and the grants are returned;
 whatever else ntfy sends is dropped rather than forwarded.
+
+Where `NTFY_TOPICS` is set, the grants are restated against it: a grant appears once
+per allowed topic it covers, so a wildcard is reported as the topics this server may
+know about rather than verbatim, and a grant covering none of them is not shown. The
+`topic` filter is bounded by the same list.
 
 ## Write tools
 
@@ -195,11 +228,18 @@ characters) and an optional `clear` boolean, plus:
 An `http` action fires from the recipient's device, not from the server. `url` must
 be `http` or `https` for the same reason.
 
-### update_message
+### update_message 👤
 
-**essential** — Replaces the content of a notification already published, so
-subscribers see it change in place instead of receiving another one. At least one
-content field is required.
+**essential** — **Asks a person first.** Replaces the content of a notification
+already published, so subscribers see it change in place instead of receiving
+another one. At least one content field is required.
+
+Gated because from ntfy 2.16 the revision replaces the notification **on the
+subscribers' devices**: the text they were shown survives nowhere but this server's
+cache. `actions` travels with the content fields, and an `http` button fires from
+the recipient's phone — so an unguarded update could turn a delivered alert into a
+button that calls something. What is confirmed is the notification, not the new
+text.
 
 The sequence id is the id returned by `publish_message`, and it only exists for
 cached messages: one published with `cache: false` cannot be updated. Only the
@@ -210,6 +250,7 @@ at the original, which is why `list_messages` shows them with an `updates` field
 | ------------- | ------ | -------- | ------------------------------------------------------------ |
 | `sequence_id` | string | yes      | Id of the notification to revise, from `publish_message`     |
 | `topic`       | string | no       | Its topic. Defaults to the first `NTFY_TOPICS` entry         |
+| `confirm_token` | string | no     | The token from this tool's previous, unconfirmed response  |
 
 Plus the content fields of `publish_message`: `message`, `title`, `priority`,
 `tags`, `click`, `icon`, `markdown` and `actions`. The publish-only fields
@@ -227,9 +268,9 @@ and remain readable with `list_messages`.
 
 Each id is reported separately, so one failure does not hide the successes.
 
-### delete_messages
+### delete_messages 👤
 
-**Confirmation token required.** Deletes notifications and cancels scheduled ones
+**Asks a person first.** Deletes notifications and cancels scheduled ones
 that have not been delivered yet.
 
 | Parameter       | Type            | Required | Description                                            |
@@ -238,13 +279,14 @@ that have not been delivered yet.
 | `topic`         | string          | no       | Their topic. Defaults to the first `NTFY_TOPICS` entry |
 | `confirm_token` | string          | no       | The token from this tool's previous, unconfirmed response |
 
-Call once without `confirm_token` to receive the token, then again with it. The
-token is bound to a fingerprint of the exact set of ids, so one issued for a single
-message cannot execute a longer list.
+Where the client can show a dialog, one is raised and `confirm_token` is never
+offered. Where it cannot, call once without it to receive the token, then again with
+it. Either way the approval is bound to a fingerprint of the exact set of ids, so one
+obtained for a single message cannot execute a longer list.
 
-### create_user
+### create_user 👤
 
-Creates a **non-admin** account on a self-hosted instance. Requires an admin
+**Asks a person first.** Creates a **non-admin** account on a self-hosted instance. Requires an admin
 account. The API cannot create administrators; only the ntfy command line can
 (`ntfy user add --role=admin`).
 
@@ -253,15 +295,21 @@ account. The API cannot create administrators; only the ntfy command line can
 | `username` | string (≤64)    | yes      | The account name                               |
 | `password` | string (8–128)  | yes      | Initial password                               |
 | `tier`     | string (≤64)    | no       | Tier name, on an instance that defines tiers   |
+| `confirm_token` | string     | no       | Only on the fallback path                      |
 
-A new account can reach nothing until `manage_user_access` grants it a topic. Be
-aware that a password passed as a tool argument stays in the conversation
+A new account can reach nothing until `manage_user_access` grants it a topic. It is
+asked about all the same, as the mirror image of `delete_user`: bringing an account
+into existence is a change to who may reach this instance, which no annotation
+carries.
+
+Be aware that a password passed as a tool argument stays in the conversation
 transcript — for an account that matters, create it on the server instead. The
-password is not echoed back in the result.
+password is not echoed back in the result, is not in the confirmation prompt, and is
+not part of the token's binding: what the approval is about is the account name.
 
-### delete_user
+### delete_user 👤
 
-**Confirmation token required.** Removes an account and every access grant attached
+**Asks a person first.** Removes an account and every access grant attached
 to it. Requires an admin account.
 
 | Parameter       | Type         | Required | Description                                               |
@@ -269,9 +317,9 @@ to it. Requires an admin account.
 | `username`      | string (≤64) | yes      | The account to remove                                     |
 | `confirm_token` | string       | no       | The token from this tool's previous, unconfirmed response |
 
-### manage_user_access
+### manage_user_access 👤
 
-**Confirmation token required.** Sets or removes an account's access to a topic or
+**Asks a person first.** Sets or removes an account's access to a topic or
 topic pattern. Requires an admin account.
 
 Destructive in both directions, which is why it is gated: taking access away breaks
@@ -295,6 +343,11 @@ a running publisher, and granting it exposes a topic's traffic to another accoun
 Five unambiguous names rather than ntfy's nine aliases for four permissions (`rw`,
 `read-write`, `ro`, `read`, `read-only`, …), which is nine ways for a model to be
 almost right. `deny` and `revoke` really are different, and both are needed.
+
+Where `NTFY_TOPICS` restricts this server, `topic` must be one of its entries and a
+wildcard is refused before the question reaches anyone. A grant is permanent access
+to every topic the pattern covers, including topics that do not exist yet, and no
+finite allowlist covers a wildcard.
 
 The confirmation token is bound to the three arguments **in order**, because their
 vocabularies overlap: a token approved for one account-and-topic pair must not

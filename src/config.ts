@@ -34,6 +34,14 @@ export interface Config {
   insecureTls: boolean;
   readOnly: boolean;
   /**
+   * Whether a client that *can* show a dialog is asked before a guarded tool
+   * acts. `ELICITATION=false` turns the dialog off — the guard stays and falls
+   * back to the two-call token, so there is no setting in which a guarded call
+   * goes unannounced.
+   */
+  elicitation: boolean;
+
+  /**
    * Raw value of `NTFY_ALLOW_TOOLS` — comma-separated tool names, `list_*`
    * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror of
    * the environment, and the names can only be checked against the tool
@@ -52,7 +60,7 @@ export function missingConfigMessage(missing: string[]): string {
     'Credentials (optional, an open instance needs none): NTFY_TOKEN, or ' +
     'NTFY_USERNAME together with NTFY_PASSWORD\n' +
     'Optional: NTFY_TOPICS to set a default topic and restrict the server to it, ' +
-    'NTFY_READ_ONLY=true to expose only read tools, ' +
+    'NTFY_READ_ONLY=true (also 1 or yes) to expose only read tools, ' +
     'NTFY_INSECURE_TLS=true to accept self-signed certificates, ' +
     'NTFY_ALLOW_TOOLS / NTFY_DENY_TOOLS to narrow the tool list ' +
     '(comma-separated names, "list_*" prefixes, or "essential")'
@@ -72,6 +80,31 @@ export function missingConfigKeys(config: Config): string[] {
 const TOPIC_PATTERN = /^[-_A-Za-z0-9]{1,64}$/;
 
 /**
+ * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
+ * anything it does not recognise.
+ *
+ * Unprefixed: environment variables are process-wide, so this is one switch for
+ * every server in the same environment. That is also its risk, which is why a
+ * server started with it off says so on its startup line.
+ *
+ * Fatal: this is the first variable of the family that defaults to *on*. The
+ * others fail open on a typo, which is the safe direction for them — including
+ * `NTFY_READ_ONLY`, which is deliberately generous about what it accepts. Here a
+ * typo would leave the dialog running while the operator believes it is off —
+ * and an operator who believes that has no way to find out.
+ */
+export function parseElicitation(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(
+    `ntfy-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+      'Refusing to start rather than guess.'
+  );
+  process.exit(1);
+}
+
+/**
  * Reads the configuration from environment variables.
  *
  * A missing URL is only a warning, not a fatal error: the server must be able to
@@ -85,12 +118,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const username = env.NTFY_USERNAME;
   const password = env.NTFY_PASSWORD;
   const rawTopics = env.NTFY_TOPICS;
+  // Strict on purpose, and the opposite of NTFY_READ_ONLY below. This one
+  // *removes* a protection, so the direction that fails safe is refusing
+  // anything but the exact word: an operator who writes NTFY_INSECURE_TLS=1 and
+  // gets certificate validation keeps a working guard, which is the harmless
+  // half of being wrong.
   const insecureTls = env.NTFY_INSECURE_TLS === 'true';
-  // Defaults to false, unlike imap-mcp. ntfy exists to publish; a read-only
-  // default would ship a notification server that cannot notify. Note the
-  // consequence: only the literal string "true" disables writes, so a typo
-  // leaves them *on* here, where in imap-mcp it left them off.
-  const readOnly = env.NTFY_READ_ONLY === 'true';
+  // Generous on purpose. This one *adds* a protection, so a value the parser
+  // does not recognise has to mean "on": `NTFY_READ_ONLY=1`, `=yes` or `=TRUE`
+  // is unmistakably somebody asking for read-only, and an equality check
+  // against "true" would leave the write tools registered while the operator
+  // believed they were gone — silently, because nothing prints for a variable
+  // that parsed to false.
+  //
+  // Trimmed for the same reason it is generous: a compose file that yields
+  // `NTFY_READ_ONLY=true ` with a trailing space is a formatting accident, and
+  // reading it as "off" is the failure this whole branch exists to prevent.
+  //
+  // Note what this does not fix: the default is still false, so a real typo
+  // (`=ture`) fails open, unlike imap-mcp where the same variable defaults to
+  // true. ntfy exists to publish; a read-only default would ship a notification
+  // server that cannot notify.
+  const readOnly = /^(1|true|yes)$/i.test(env.NTFY_READ_ONLY?.trim() ?? '');
   const allowTools = env.NTFY_ALLOW_TOOLS;
   const denyTools = env.NTFY_DENY_TOOLS;
 
@@ -98,6 +147,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // environment is visible to child processes and in /proc/<pid>/environ.
   delete env.NTFY_TOKEN;
   delete env.NTFY_PASSWORD;
+
+  // After the delete, deliberately: this one can exit the process, and an exit
+  // above would leave the credential in the environment for whatever runs next.
+  const elicitation = parseElicitation(env.ELICITATION);
 
   if (token && (username || password)) {
     // Not a precedence rule. Which credential is in force must never be
@@ -133,6 +186,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       topics,
       insecureTls,
       readOnly,
+      elicitation,
       allowTools,
       denyTools,
     };
@@ -189,6 +243,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     topics,
     insecureTls,
     readOnly,
+    elicitation,
     allowTools,
     denyTools,
   };
@@ -218,10 +273,22 @@ function parseTopics(raw: string | undefined): readonly string[] {
 }
 
 function isLoopbackHost(hostname: string): boolean {
+  // URL.hostname keeps the brackets around an IPv6 literal, may carry a %zone
+  // suffix, and 'localhost.' with its root label is the same name as
+  // 'localhost'. The comparison this replaced saw none of them — which is why
+  // its bare '::1' branch could never match a hostname taken from a URL.
+  const host = hostname
+    .toLowerCase()
+    .replace(/^\[|]$/g, '')
+    .replace(/%.*$/, '')
+    .replace(/\.+$/, '');
   return (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.startsWith('127.') ||
-    hostname === '::1'
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.startsWith('127.') ||
+    host === '::1' ||
+    // Every dual-stack client dials ::ffff:127.0.0.1 as plain 127.0.0.1, and
+    // URL normalises the mapped form to hex (::ffff:7f00:1).
+    /^::ffff:(?:7f[0-9a-f]{0,2}:|127\.)/.test(host)
   );
 }

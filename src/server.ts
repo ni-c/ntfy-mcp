@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module';
+import { McpServer } from '@modelcontextprotocol/server';
+import { buildToolFilter, installToolFilter } from 'mcp-tool-allowlist';
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ALL_TOOLS, ESSENTIAL_TOOLS, READ_TOOLS } from './tools/catalogue.js';
 
 import { NtfyApi } from './api.js';
 import type { Config } from './config.js';
-import { ConfirmationStore } from './confirm.js';
-import { buildToolFilter, installToolFilter } from './tool-filter.js';
+import { ConfirmationStore, createApproval } from 'mcp-approval';
 import { registerAdminWriteTools } from './tools/admin-write.js';
 import { registerMessageWriteTools } from './tools/messages-write.js';
 import { registerReadTools } from './tools/read.js';
@@ -39,10 +40,34 @@ function packageVersion(): string {
 export function createServer(config: Config): McpServer {
   // Before anything is built: an unusable tool list should fail on the way in,
   // not leave a server running with tools quietly missing.
-  const filter = buildToolFilter(config);
+  const filter = buildToolFilter({
+    allowTools: config.allowTools,
+    denyTools: config.denyTools,
+    catalogue: {
+      all: ALL_TOOLS,
+      essential: ESSENTIAL_TOOLS,
+      ungated: READ_TOOLS,
+    },
+    names: {
+      allow: 'NTFY_ALLOW_TOOLS',
+      deny: 'NTFY_DENY_TOOLS',
+      server: 'ntfy-mcp',
+    },
+    gate: {
+      closed: config.readOnly,
+      variable: 'NTFY_READ_ONLY',
+      noun: 'read-only mode',
+    },
+  });
 
   const api = new NtfyApi(config);
   const confirmations = new ConfirmationStore();
+  // One approver per server: it holds the key that seals the request state
+  // carried out through the client and back.
+  const approval = createApproval({
+    server: 'ntfy-mcp',
+    elicitation: config.elicitation,
+  });
 
   const server = new McpServer(
     {
@@ -60,8 +85,8 @@ export function createServer(config: Config): McpServer {
   // Read-only mode does not register the write tools at all. Rejecting them at
   // call time would still advertise capabilities the server refuses to provide.
   if (!config.readOnly) {
-    registerMessageWriteTools(server, api, confirmations);
-    registerAdminWriteTools(server, api, confirmations);
+    registerMessageWriteTools(server, api, confirmations, approval);
+    registerAdminWriteTools(server, api, confirmations, approval);
   }
 
   return server;

@@ -1,14 +1,24 @@
+/**
+ * What this repository still has to prove about its tool filter.
+ *
+ * The filter lives in `mcp-tool-allowlist` and is tested there: pattern syntax,
+ * the preset, how a rejected entry is quoted back, the shape of every message.
+ * What only this repository can assert is the wiring — that the catalogue names
+ * exactly the tools the server registers, that the messages name *these*
+ * variables, and that a filtered tool is really gone rather than merely hidden.
+ */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import { createServer } from '../src/server.js';
-import { ToolFilterError } from '../src/tool-filter.js';
 import {
   ALL_TOOLS,
   ESSENTIAL_TOOLS,
   READ_TOOLS,
   WRITE_TOOLS,
 } from '../src/tools/catalogue.js';
+
+import { createServer } from '../src/server.js';
+import { ToolFilterError } from 'mcp-tool-allowlist';
 import { connect, stubFetch, testConfig, toolNames } from './harness.js';
+import { expectPortableToolSchemas } from 'mcp-integration-harness';
 
 const config = testConfig;
 
@@ -96,19 +106,6 @@ describe('selecting tools', () => {
     ).toEqual([...ESSENTIAL_TOOLS, 'delete_messages'].sort());
   });
 
-  it('trims entries, ignores case and skips empty ones', async () => {
-    expect(
-      await toolNames({ allowTools: ' LIST_MESSAGES ,, get_message, ' })
-    ).toEqual(['get_message', 'list_messages']);
-  });
-
-  it('treats an empty value as no filter at all', async () => {
-    // `NTFY_ALLOW_TOOLS=` in a compose file must not mean "allow nothing".
-    expect(await toolNames({ allowTools: '   ' })).toEqual(
-      [...ALL_TOOLS].sort()
-    );
-  });
-
   it('leaves an unconfigured server untouched', async () => {
     expect(await toolNames()).toEqual([...ALL_TOOLS].sort());
   });
@@ -130,15 +127,15 @@ describe('a filtered-out tool', () => {
     // This is the difference between removing the tool and disabling it: a
     // disabled tool still answers a call, which advertises a refusal.
     const harness = await connect({ allowTools: 'list_messages' });
-    const result = await harness.call('delete_messages', {
-      sequence_ids: ['aaaaaaaaaaaa'],
-      topic: 'alerts',
-    });
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain(
-      'Tool delete_messages not found'
-    );
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      harness.call('delete_messages', {
+        sequence_ids: ['aaaaaaaaaaaa'],
+        topic: 'alerts',
+      })
+    ).rejects.toThrow('Tool delete_messages not found');
     expect(harness.calls).toHaveLength(0);
   });
 });
@@ -153,23 +150,6 @@ describe('refusing an unusable list', () => {
     );
     expect(() => createServer(config({ allowTools: 'list_messagez' }))).toThrow(
       /no tool matches "list_messagez".*list_messages/s
-    );
-  });
-
-  it('rejects a pattern that matches nothing', () => {
-    stubFetch();
-    expect(() => createServer(config({ allowTools: 'lst_*' }))).toThrow(
-      /no tool matches "lst_\*"/
-    );
-  });
-
-  it('rejects a pattern with the star anywhere but last', () => {
-    stubFetch();
-    expect(() => createServer(config({ allowTools: '*_message' }))).toThrow(
-      /single trailing "\*"/
-    );
-    expect(() => createServer(config({ allowTools: 'list_*_x' }))).toThrow(
-      /single trailing "\*"/
     );
   });
 
@@ -230,7 +210,7 @@ describe('together with read-only mode', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() =>
       createServer(config({ ...readOnly, allowTools: 'create_*' }))
-    ).toThrow(/only write tools, but NTFY_READ_ONLY is set/);
+    ).toThrow(/read-only mode suppresses.*NTFY_READ_ONLY is set/s);
   });
 
   it('does not apply the write-tool rule to the deny list', async () => {
@@ -266,10 +246,118 @@ describe('the tools themselves', () => {
       'delete_messages',
       'delete_user',
       'manage_user_access',
+      // Added with the annotation sweep: it replaces the fields of a message
+      // people have already received a copy of, and what was there does not
+      // come back.
+      'update_message',
     ]);
   });
 
-  it('require a confirm token on exactly the destructive tools', async () => {
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world. Four tools here said only
+    // `readOnlyHint: false`, which is that claim with a word in front of it.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+  });
+
+  it('declares an output schema on every tool', async () => {
+    // The same argument as the annotations above, one field along. A tool that
+    // says nothing about its result forces a client to parse prose to find out
+    // what it got, and the SDK will not send `structuredContent` for a tool
+    // that declared no schema — so the machine-readable half simply does not
+    // exist until this is here.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      // An object root, not merely a schema. SEP-2106 allows an array or a
+      // scalar, but a 2025-era client is served that same tool with the schema
+      // rewritten to `{result: …}` — so the tool would answer in two different
+      // shapes depending on who asked.
+      expect(tool.outputSchema?.type, tool.name).toBe('object');
+    }
+  });
+
+  it('advertises schemas every client can read', async () => {
+    // Legal JSON Schema is not enough. `{}` in a schema position — what zod
+    // writes for `looseObject`, `catchall` and `z.unknown()` — and `type` as an
+    // array are both refused, or silently dropped, by some clients. Neither is
+    // a contract: each has an equivalent spelling that says the same thing, so
+    // there is nothing here to excuse.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    expectPortableToolSchemas(tools);
+  });
+
+  it('marks every result built from ntfy content as untrusted', async () => {
+    // The marker has to survive into the structured channel, or a client that
+    // reads only `structuredContent` — which is the point of declaring a schema
+    // at all — gets a publisher's prose with no framing whatsoever.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const marked = tools
+      .filter((tool) => {
+        const properties = tool.outputSchema?.properties as
+          Record<string, unknown> | undefined;
+        return properties?.untrusted !== undefined;
+      })
+      .map((tool) => tool.name)
+      .sort();
+    // get_server_info is deliberately absent: its four sections are the
+    // instance's own configuration and counters, set by whoever runs the server
+    // this client was pointed at — not by a third party who happened to learn a
+    // topic name.
+    expect(marked).toEqual([
+      'get_account',
+      'get_message',
+      'list_messages',
+      'list_users',
+    ]);
+  });
+
+  it('does not call publishing destructive', async () => {
+    // The one that fits neither half of the rule. Sending a notification
+    // destroys nothing, and it reaches people who cannot un-receive it. That
+    // is an outbound effect, not a destructive one, and no annotation carries
+    // it — marking it destructive would put the warning on the wrong axis.
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get('publish_message')?.destructiveHint).toBe(false);
+    expect(byName.get('create_user')?.destructiveHint).toBe(false);
+    expect(byName.get('mark_messages_read')?.destructiveHint).toBe(false);
+  });
+
+  it('require a confirm token on the five guarded tools', async () => {
+    // Deliberately a list rather than "wherever destructiveHint is true".
+    // Those are two different claims: the annotation says what a call does,
+    // the confirmation decides whether a person is asked first. create_user is
+    // guarded without being destructive — a gap worth seeing, not a reason to
+    // soften an annotation until the two lists agree.
+    const guarded = [
+      'create_user',
+      'delete_messages',
+      'delete_user',
+      'manage_user_access',
+      'update_message',
+    ];
     const { client } = await connect();
     const { tools } = await client.listTools();
     for (const tool of tools) {
@@ -277,7 +365,7 @@ describe('the tools themselves', () => {
         tool.inputSchema as { properties?: Record<string, unknown> }
       ).properties;
       const gated = properties !== undefined && 'confirm_token' in properties;
-      expect(gated, tool.name).toBe(tool.annotations?.destructiveHint === true);
+      expect(gated, tool.name).toBe(guarded.includes(tool.name));
     }
   });
 

@@ -13,6 +13,60 @@ function catchExit(): void {
   });
 }
 
+describe('ELICITATION', () => {
+  const base = { NTFY_URL: 'https://ntfy.example.net' };
+
+  it('defaults to on, and to on for an empty value', () => {
+    // The only variable of this family that defaults to *on*. An unset switch
+    // has to mean "ask", or a deployment that never heard of it would quietly
+    // stop asking.
+    expect(loadConfig({ ...base }).elicitation).toBe(true);
+    expect(loadConfig({ ...base, ELICITATION: '' }).elicitation).toBe(true);
+  });
+
+  it('is switched off by "false", in any casing or padding', () => {
+    for (const raw of ['false', 'FALSE', ' False ']) {
+      expect(loadConfig({ ...base, ELICITATION: raw }).elicitation, raw).toBe(
+        false
+      );
+    }
+  });
+
+  it('refuses to start on anything else, naming both valid values', () => {
+    // Deliberately fatal rather than falling back to the default: a typo would
+    // leave the dialog running while the operator believes it is off, and
+    // nothing else would ever tell them.
+    for (const raw of ['1', 'off', 'no']) {
+      const error = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+      catchExit();
+      expect(() => loadConfig({ ...base, ELICITATION: raw })).toThrow('exited');
+      const message = String(error.mock.calls[0]?.[0] ?? '');
+      expect(message, raw).toContain('ELICITATION');
+      expect(message, raw).toContain('"true"');
+      expect(message, raw).toContain('"false"');
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('has already wiped the credentials by the time it can exit', () => {
+    // parseElicitation sits *after* the delete on purpose. An exit above it
+    // would leave the secret in the environment for whatever a crash reporter
+    // or an inspector does next — which is exactly what that delete exists to
+    // prevent, and its comment says so.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    catchExit();
+    const env = {
+      ...base,
+      NTFY_TOKEN: 'tk_secret',
+      ELICITATION: 'nonsense',
+    };
+    expect(() => loadConfig(env)).toThrow('exited');
+    expect(env.NTFY_TOKEN).toBeUndefined();
+  });
+});
+
 describe('loadConfig', () => {
   it('starts without any configuration so tools stay listable', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -145,6 +199,22 @@ describe('loadConfig', () => {
     expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unencrypted/);
   });
 
+  it.each([
+    ['bracketed IPv6', 'http://[::1]:8080'],
+    ['IPv4-mapped IPv6', 'http://[::ffff:127.0.0.1]:8080'],
+    ['a fully qualified localhost', 'http://localhost.:8080'],
+  ])('stays quiet about plain http to loopback spelled as %s', (_, url) => {
+    // URL.hostname hands back '[::1]' with its brackets and normalises
+    // ::ffff:127.0.0.1 to '[::ffff:7f00:1]'. The comparison this replaced
+    // checked for a bare '::1' and so warned about every one of these.
+    const errors = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    loadConfig({ NTFY_URL: url });
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unencrypted/);
+    errors.mockRestore();
+  });
+
   it('warns about anonymous writes against the public instance', () => {
     // The one shape where the blast radius is genuinely unbounded: knowing a
     // topic name is the whole of the access control on ntfy.sh.
@@ -174,22 +244,54 @@ describe('loadConfig', () => {
     );
   });
 
-  it('only accepts the literal string "true" for read-only', () => {
-    // Because the default is false, a typo leaves writes ON — the README says
-    // so, and this is the assertion behind that sentence.
-    for (const value of ['ture', 'TRUE', 'yes', '1', 'false']) {
+  it('reads every spelling an operator plausibly means by read-only', () => {
+    // A protection switch is parsed generously on purpose. An equality check
+    // against "true" turned NTFY_READ_ONLY=1 into a server with every write
+    // tool registered, and said nothing — nothing prints for a variable that
+    // parsed to false, so the operator had no way to notice.
+    // The trailing space is not padding: a compose file that yields it is a
+    // formatting accident, and reading it as "off" is exactly the silent
+    // failure this tolerance exists to prevent.
+    for (const value of [
+      'true',
+      'TRUE',
+      'True',
+      'yes',
+      'YES',
+      '1',
+      'true ',
+      ' yes',
+    ]) {
+      const config = loadConfig({
+        NTFY_URL: 'https://ntfy.example.net',
+        NTFY_READ_ONLY: value,
+      });
+      expect(config.readOnly, value).toBe(true);
+    }
+  });
+
+  it('still fails open on a genuine typo, because the default is false', () => {
+    // The limit of the tolerance above, and the reason NTFY_TOPICS rather than
+    // this variable is the control the documentation points at.
+    for (const value of ['ture', 'false', 'no', '0', '']) {
       const config = loadConfig({
         NTFY_URL: 'https://ntfy.example.net',
         NTFY_READ_ONLY: value,
       });
       expect(config.readOnly, value).toBe(false);
     }
-    expect(
-      loadConfig({
+  });
+
+  it('keeps NTFY_INSECURE_TLS strict, where strict is the safe direction', () => {
+    // The mirror image: this one removes a protection, so anything but the
+    // exact word has to mean "keep validating".
+    for (const value of ['1', 'yes', 'TRUE']) {
+      const config = loadConfig({
         NTFY_URL: 'https://ntfy.example.net',
-        NTFY_READ_ONLY: 'true',
-      }).readOnly
-    ).toBe(true);
+        NTFY_INSECURE_TLS: value,
+      });
+      expect(config.insecureTls, value).toBe(false);
+    }
   });
 
   it('parses the topic allowlist and keeps its order', () => {

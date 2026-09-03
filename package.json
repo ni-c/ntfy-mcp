@@ -40,28 +40,31 @@
     "build": "tsc",
     "typecheck": "tsc --project tsconfig.test.json",
     "watch": "tsc --watch",
-    "lint": "eslint . && prettier --check .",
+    "lint": "oxlint --deny-warnings && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run build && npm test",
-    "assets": "node scripts/gen-assets.mjs",
-    "assets:check": "node scripts/gen-assets.mjs --check"
+    "assets": "svg-asset-set",
+    "assets:check": "svg-asset-set --check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "mcp-approval": "^0.8.0",
+    "mcp-tool-allowlist": "^0.2.1",
     "undici": "^8.10.0",
     "zod": "^4.5.2"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@resvg/resvg-js": "^2.6.2",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.3.0",
     "@vitest/coverage-v8": "4.1.11",
-    "eslint": "^10.9.1",
+    "mcp-integration-harness": "^0.4.0",
+    "oxlint": "^1.80.0",
     "prettier": "^3.9.6",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.68.0",
+    "svg-asset-set": "https://github.com/ni-c/svg-asset-set/releases/download/v0.2.0/svg-asset-set-0.2.0.tgz",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }
 }
