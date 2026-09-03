@@ -13,12 +13,12 @@ services:
     # Overridable so the weekly CI run can point at :latest and report drift
     # without changing what the PR gate tests.
     #
-    # 2.19.2 rather than something older: updating and deleting notifications
+    # 2.28.0 rather than something older: updating and deleting notifications
     # arrived in **2.16.0**, and against 2.14.0 the three tools that use them
     # do not fail loudly — `delete_messages` and `mark_messages_read` report
     # `ok: false` per id inside a successful result, and `update_message`
     # quietly publishes a second notification instead of revising the first.
-    image: ${NTFY_IMAGE:-binwiederhier/ntfy:v2.19.2}
+    image: ${NTFY_IMAGE:-binwiederhier/ntfy:v2.28.0}
     # ntfy has no HTTP endpoint that creates the first admin — `ntfy user add`
     # is a CLI command against the same user database the server reads. Doing
     # it here rather than with `docker compose exec` from the test keeps the
