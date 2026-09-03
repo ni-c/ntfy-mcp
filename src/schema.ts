@@ -36,6 +36,30 @@ export const foreignDocument = z.looseObject({}).meta({
 });
 
 /**
+ * Any JSON value at all: object, array, string, number, boolean or null.
+ *
+ * For the places where the value is a publisher's to choose — `actions` is the
+ * example — and where an allowlist copies what ntfy sent instead of rebuilding
+ * it. `z.unknown()` says the same thing at runtime but emits `{}`, the empty
+ * schema some MCP clients refuse or mishandle; the six branches spell it out.
+ *
+ * The `additionalProperties` on the object branch is what keeps them apart:
+ * zod folds an `anyOf` of bare `{"type": …}` branches back into a single
+ * `"type": [...]` array, and clients that read `type` as one string drop the
+ * field or refuse the tool.
+ */
+export const anyJsonValue = z.unknown().meta({
+  anyOf: [
+    { type: 'object', additionalProperties: true },
+    { type: 'array' },
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'null' },
+  ],
+});
+
+/**
  * The marker every result built from ntfy content carries, in the structured
  * channel as well as the text one.
  *

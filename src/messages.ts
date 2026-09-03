@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { NtfyMessage } from './api.js';
+import { anyJsonValue } from './schema.js';
 
 /** Total response budget for a tool result, before the untrusted-data marker. */
 export const MAX_RESULT_BYTES = 200_000;
@@ -75,8 +76,8 @@ export const messageView = z.object({
   tags: z.array(z.string()).optional(),
   click: z.string().optional(),
   icon: z.string().optional(),
-  actions: z.array(z.unknown()).optional(),
-  attachment: z.unknown().optional(),
+  actions: z.array(anyJsonValue).optional(),
+  attachment: anyJsonValue.optional(),
   content_type: z.string().optional(),
 });
 

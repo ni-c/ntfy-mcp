@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
+  anyJsonValue,
   foreignDocument,
   messageIdParam,
   priorityParam,
@@ -408,14 +409,16 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
       // (`{code, name}`), while on `/v1/users` the same word is a string.
       outputSchema: z.object({
         ...untrustedFields,
-        username: z.unknown().optional(),
-        role: z.unknown().optional(),
-        tier: z.unknown().optional(),
-        limits: z.unknown().optional().describe('Quota ceilings of the tier.'),
-        stats: z.unknown().optional().describe('Usage against those ceilings.'),
-        language: z.unknown().optional(),
+        username: anyJsonValue.optional(),
+        role: anyJsonValue.optional(),
+        tier: anyJsonValue.optional(),
+        limits: anyJsonValue.optional().describe('Quota ceilings of the tier.'),
+        stats: anyJsonValue
+          .optional()
+          .describe('Usage against those ceilings.'),
+        language: anyJsonValue.optional(),
         tokens: z
-          .array(z.unknown())
+          .array(anyJsonValue)
           .optional()
           .describe('Access tokens with their value replaced by "(redacted)".'),
       }),

@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The advertised schemas avoid a spelling that is legal JSON Schema and still
+  gets a tool refused, or its constraint silently dropped, by some MCP clients:
+  a value that was left untyped is declared as what it really is. What the
+  tools accept and return is unchanged; only the way the schema says so is.
+
 - `manage_user_access` reports the `action` it was asked for on every outcome,
   not only on `revoke`. Granting and revoking answered in two different shapes
   before; the shape is now one.
