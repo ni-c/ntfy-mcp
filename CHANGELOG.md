@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file nobody could open. `dist/**/*.js` is unchanged; the package is about a
   fifth smaller.
 
+### Changed
+
+- The loopback check behind the plain-HTTP warning comes from
+  `mcp-internal-hosts` instead of a copy in `config.ts`. Same classifier the
+  rest of the family uses, same behaviour — one fewer place to keep 25 lines of
+  hand-written IPv6 normalisation correct.
+
 [Unreleased]: https://github.com/ni-c/ntfy-mcp/compare/v0.2.0...HEAD
 
 ## [0.2.0] - 2026-09-03

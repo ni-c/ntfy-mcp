@@ -53,6 +53,7 @@
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "mcp-approval": "^0.8.0",
+    "mcp-internal-hosts": "^0.2.1",
     "mcp-tool-allowlist": "^0.2.1",
     "undici": "^8.10.0",
     "zod": "^4.5.2"

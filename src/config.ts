@@ -1,3 +1,5 @@
+import { internalHostKind } from 'mcp-internal-hosts';
+
 /** How the server authenticates against ntfy. */
 export type Credentials =
   | { kind: 'token'; token: string }
@@ -273,22 +275,8 @@ function parseTopics(raw: string | undefined): readonly string[] {
 }
 
 function isLoopbackHost(hostname: string): boolean {
-  // URL.hostname keeps the brackets around an IPv6 literal, may carry a %zone
-  // suffix, and 'localhost.' with its root label is the same name as
-  // 'localhost'. The comparison this replaced saw none of them — which is why
-  // its bare '::1' branch could never match a hostname taken from a URL.
-  const host = hostname
-    .toLowerCase()
-    .replace(/^\[|]$/g, '')
-    .replace(/%.*$/, '')
-    .replace(/\.+$/, '');
-  return (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.startsWith('127.') ||
-    host === '::1' ||
-    // Every dual-stack client dials ::ffff:127.0.0.1 as plain 127.0.0.1, and
-    // URL normalises the mapped form to hex (::ffff:7f00:1).
-    /^::ffff:(?:7f[0-9a-f]{0,2}:|127\.)/.test(host)
-  );
+  // The same classifier the SSRF guard uses, so a loopback URL written as
+  // http://[::1]:3000 or http://[::ffff:127.0.0.1]:3000 is recognised here too
+  // and the plain-http warning does not fire on it.
+  return internalHostKind(hostname) === 'loopback';
 }
