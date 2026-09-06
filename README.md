@@ -1,6 +1,7 @@
 # ntfy-mcp
 
 <!-- badges: start -->
+
 [![CI](https://img.shields.io/github/actions/workflow/status/ni-c/ntfy-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/ntfy-mcp/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ni-c/ntfy-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/ni-c/ntfy-mcp)
 <a href="https://socket.dev/npm/package/@ni-c/ntfy-mcp"><img src="https://socket.dev/api/badge/npm/package/@ni-c/ntfy-mcp" alt="Socket supply-chain report" height="20"></a>
