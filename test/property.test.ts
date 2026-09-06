@@ -6,7 +6,6 @@ import {
   MAX_TAGS,
   PREVIEW_CHARS,
   toView,
-  type NtfyMessage,
 } from '../src/messages.js';
 import { tupleResourceKey } from '../src/resource-key.js';
 
@@ -25,6 +24,9 @@ import { tupleResourceKey } from '../src/resource-key.js';
  */
 
 const RUNS = { numRuns: 500 };
+
+/** Derived rather than imported: `messages.ts` keeps the type to itself. */
+type NtfyMessage = Parameters<typeof toView>[0];
 
 const part = fc.stringMatching(/^[a-z0-9]{1,12}$/);
 
@@ -117,11 +119,7 @@ describe('a message view stays inside its budgets', () => {
         fc.array(fc.jsonValue(), { maxLength: 12 }),
         (text, tags, actions) => {
           const view = toView(
-            message({
-              message: text,
-              tags,
-              actions: actions as NtfyMessage['actions'],
-            }),
+            message({ message: text, tags, actions } as Partial<NtfyMessage>),
             { preview: false }
           );
           if (view.oversized !== true) {
