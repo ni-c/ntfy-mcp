@@ -280,7 +280,7 @@ describe('get_account', () => {
     const redacted = redactAccount({
       username: 'alice',
       role: 'user',
-      phone_numbers: ['+352123456789'],
+      phone_numbers: ['+442079460123'],
       billing: { stripe_customer_id: 'cus_ExampleNotReal' },
       reservations: [{ topic: 'private-alerts', everyone: 'deny-all' }],
       subscriptions: [{ id: 'su_1', base_url: '', topic: 'another-secret' }],
