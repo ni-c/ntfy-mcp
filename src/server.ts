@@ -72,7 +72,23 @@ export function createServer(config: Config): McpServer {
   const server = new McpServer(
     {
       name: 'ntfy-mcp',
+      title: 'ntfy',
+      description:
+        'Publish ntfy notifications, read the message cache, and manage users and topic access',
       version: packageVersion(),
+      websiteUrl: 'https://ntfy-mcp.ni-c.de',
+      icons: [
+        {
+          src: 'https://ntfy-mcp.ni-c.de/icon-512.png',
+          mimeType: 'image/png',
+          sizes: ['512x512'],
+        },
+        {
+          src: 'https://ntfy-mcp.ni-c.de/favicon.svg',
+          mimeType: 'image/svg+xml',
+          sizes: ['any'],
+        },
+      ],
     },
     { instructions: INSTRUCTIONS }
   );
