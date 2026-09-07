@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { setResourceKey } from 'mcp-approval';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 import {
   actionSchema,
@@ -18,7 +18,6 @@ import {
 } from '../schema.js';
 
 import type { NtfyApi, NtfyMessage } from '../api.js';
-import { tupleResourceKey } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
 
 const MAX_TOPICS = 10;
@@ -307,9 +306,11 @@ export function registerMessageWriteTools(
         // here. Turning a delivered alert into a button that calls something is
         // not what publish_message's unguarded outbound-effect argument covers.
         //
-        // tupleResourceKey, not setResourceKey: a topic name and a message id
-        // are both letters and digits, so a sorted key would let a
-        // confirmation for one execute the pair the other way round.
+        // orderedResourceKey, not setResourceKey: a topic name and a message id
+        // are both letters and digits, so a sorted key would give (topic, id)
+        // and (id, topic) the same fingerprint and let a confirmation for one
+        // execute the pair the other way round. The ids in delete_messages
+        // really are a set, which is why that tool stays on setResourceKey.
         //
         // The content is not in the key. What is confirmed is "revise this
         // notification", and binding the new text would mean a person had to be
@@ -326,7 +327,7 @@ export function registerMessageWriteTools(
             consequence:
               'Subscribers who already received it see it change in place, ' +
               'and the text they were shown is not recoverable.',
-            resourceKey: tupleResourceKey('update_message', [
+            resourceKey: orderedResourceKey('update_message', [
               topic,
               args.sequence_id,
             ]),

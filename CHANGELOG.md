@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.3.0] - 2026-09-07
 
 ### Added
 
@@ -39,7 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rest of the family uses, same behaviour — one fewer place to keep 25 lines of
   hand-written IPv6 normalisation correct.
 
-[Unreleased]: https://github.com/ni-c/ntfy-mcp/compare/v0.2.0...HEAD
+### Security
+
+- **mcp-approval 0.8.2.** A sealed dialog answer is single-use since 0.8.1: the same `requestState` presented again within its lifetime used to be accepted again, and with a resource key that is the same every time — a whole stream, a fixed set of targets — every replay landed. npm users on `^0.8.0` already had the fix; the Docker image is built from the lockfile and carried 0.8.0 until this release.
+- **Approval keys bound to positions.** `manage_user_access` is confirmed on (username, topic, action) and `update_message` on (topic, message id), and in both the vocabularies overlap: a username is a legal topic name, a twelve-character message id is one too. A key built from a _sorted_ set of those parts would let a token issued for "grant alice read_only on topic deploy" also confirm "grant deploy read_only on topic alice", and a token for revising message `a…` on topic `b…` also confirm the pair the other way round. This server never had that bug — it carried its own positional `tupleResourceKey` — but the local copy is gone: both tools now build their keys with `orderedResourceKey` from mcp-approval 0.8.2, which prefixes every part with its index before fingerprinting. `create_user`, `delete_user` and `delete_messages` stay on `setResourceKey`, where a single value or a genuine set is what is confirmed.
 
 ## [0.2.0] - 2026-09-03
 

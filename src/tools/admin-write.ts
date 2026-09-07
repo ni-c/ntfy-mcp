@@ -1,9 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { setResourceKey } from 'mcp-approval';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 
-import { tupleResourceKey } from '../resource-key.js';
 import {
   confirmTokenParam,
   topicPatternParam,
@@ -276,9 +275,15 @@ export function registerAdminWriteTools(
         // to every topic on an instance this server is restricted to one of.
         const topic = api.resolveTopicPattern(args.topic);
 
-        // tupleResourceKey, not setResourceKey: these three are positional and
-        // their vocabularies overlap, so sorting them would let a token
-        // approved for one (user, topic) pair execute the reverse pair.
+        // orderedResourceKey, not setResourceKey: these three are positional
+        // and their vocabularies overlap almost entirely — a username is a
+        // legal topic, and every action name is a legal value for either.
+        // Under a sorted key, confirming "grant alice read_only on topic
+        // deploy" would produce the same key as "grant deploy read_only on
+        // topic alice", so a token approved for one account and topic would
+        // execute a grant on a pair that was never shown to anyone. The
+        // positional key used to be a local tupleResourceKey; since
+        // mcp-approval 0.8.2 the library has it.
         const what =
           args.action === 'revoke'
             ? `remove the access rule for "${args.username}" on topic ` +
@@ -293,7 +298,7 @@ export function registerAdminWriteTools(
             what: what,
             consequence:
               'Access rules take effect immediately for anyone using that account.',
-            resourceKey: tupleResourceKey('manage_user_access', [
+            resourceKey: orderedResourceKey('manage_user_access', [
               args.username,
               topic,
               args.action,

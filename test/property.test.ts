@@ -1,4 +1,5 @@
 import fc from 'fast-check';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,16 +8,18 @@ import {
   PREVIEW_CHARS,
   toView,
 } from '../src/messages.js';
-import { tupleResourceKey } from '../src/resource-key.js';
 
 /**
  * Properties of the two places where an ordering or a budget is the control.
  *
- * `tupleResourceKey` carries a security argument in its own docstring that
- * nothing checked: sorting the targets would make "grant alice read_only on
+ * `manage_user_access` and `update_message` build their confirmation keys with
+ * `orderedResourceKey` from mcp-approval, chosen over `setResourceKey` for a
+ * security argument: sorting the targets would make "grant alice read_only on
  * topic deploy" and "grant deploy read_only on topic alice" the same key, so a
  * confirmation approved for one account and topic would execute a grant on a
- * pair nobody was shown. The property below is that argument, stated.
+ * pair nobody was shown. The properties below are that argument, stated
+ * against the library function the two tools now call — the local
+ * `tupleResourceKey` they used to call is gone.
  *
  * `toView` shapes a message written by whoever could publish to the topic,
  * which on an open instance is anyone who knows its name. Its budgets are the
@@ -41,8 +44,28 @@ describe('a confirmation key depends on the order of its targets', () => {
     fc.assert(
       fc.property(part, part, part, (a, b, c) => {
         fc.pre(a !== b);
-        expect(tupleResourceKey('manage_user_access', [a, b, c])).not.toBe(
-          tupleResourceKey('manage_user_access', [b, a, c])
+        expect(orderedResourceKey('manage_user_access', [a, b, c])).not.toBe(
+          orderedResourceKey('manage_user_access', [b, a, c])
+        );
+      }),
+      RUNS
+    );
+  });
+
+  /**
+   * The bug the choice prevents, shown rather than described: the set key
+   * really does give the swapped pair the same fingerprint, so a tool that
+   * used it on positional arguments would accept one token for both.
+   */
+  it('the set key would have collided on the swap; the ordered key does not', () => {
+    fc.assert(
+      fc.property(part, part, (topic, id) => {
+        fc.pre(topic !== id);
+        expect(setResourceKey('update_message', [topic, id])).toBe(
+          setResourceKey('update_message', [id, topic])
+        );
+        expect(orderedResourceKey('update_message', [topic, id])).not.toBe(
+          orderedResourceKey('update_message', [id, topic])
         );
       }),
       RUNS
@@ -52,8 +75,8 @@ describe('a confirmation key depends on the order of its targets', () => {
   it('the same tuple always fingerprints the same', () => {
     fc.assert(
       fc.property(fc.array(part, { maxLength: 6 }), (parts) => {
-        expect(tupleResourceKey('update_message', parts)).toBe(
-          tupleResourceKey('update_message', [...parts])
+        expect(orderedResourceKey('update_message', parts)).toBe(
+          orderedResourceKey('update_message', [...parts])
         );
       }),
       RUNS
@@ -72,8 +95,8 @@ describe('a confirmation key depends on the order of its targets', () => {
         fc.stringMatching(/^[a-z_]{3,20}$/),
         (parts, first, second) => {
           fc.pre(first !== second);
-          expect(tupleResourceKey(first, parts)).not.toBe(
-            tupleResourceKey(second, parts)
+          expect(orderedResourceKey(first, parts)).not.toBe(
+            orderedResourceKey(second, parts)
           );
         }
       ),
@@ -83,17 +106,18 @@ describe('a confirmation key depends on the order of its targets', () => {
 
   /**
    * Joining cannot be forged. Two different tuples must not collide because
-   * their parts concatenate to the same string — the reason the parts go
-   * through `JSON.stringify` rather than a separator someone picks.
+   * their parts concatenate to the same string — the reason each part carries
+   * its index and the parts go through `JSON.stringify` rather than a
+   * separator someone picks.
    */
   it('parts cannot be merged or split into a matching key', () => {
     fc.assert(
       fc.property(part, part, (a, b) => {
-        expect(tupleResourceKey('op', [a, b])).not.toBe(
-          tupleResourceKey('op', [`${a}${b}`])
+        expect(orderedResourceKey('op', [a, b])).not.toBe(
+          orderedResourceKey('op', [`${a}${b}`])
         );
-        expect(tupleResourceKey('op', [a, b])).not.toBe(
-          tupleResourceKey('op', [a, '', b])
+        expect(orderedResourceKey('op', [a, b])).not.toBe(
+          orderedResourceKey('op', [a, '', b])
         );
       }),
       RUNS
