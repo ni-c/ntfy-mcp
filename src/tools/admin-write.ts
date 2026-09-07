@@ -1,9 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { setResourceKey } from 'mcp-approval';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import type { Approver, ConfirmationStore } from 'mcp-approval';
 
-import { tupleResourceKey } from '../resource-key.js';
 import {
   confirmTokenParam,
   topicPatternParam,
@@ -47,10 +46,10 @@ export const ACCESS_ACTION_NAMES = [
 type Mapped = keyof typeof ACCESS_ACTIONS;
 type Advertised = Exclude<(typeof ACCESS_ACTION_NAMES)[number], 'revoke'>;
 // Fails to compile if either list gains an entry the other does not have.
-const _actionsAgree: [Mapped, Advertised] extends [Advertised, Mapped]
+const actionsAgree: [Mapped, Advertised] extends [Advertised, Mapped]
   ? true
   : never = true;
-void _actionsAgree;
+void actionsAgree;
 
 export function registerAdminWriteTools(
   server: McpServer,
@@ -125,9 +124,20 @@ export function registerAdminWriteTools(
               'It becomes an account on this instance. Nothing is reachable ' +
               'through it until manage_user_access grants a topic — but ' +
               'whoever has the password can then authenticate as it.',
-            resourceKey: setResourceKey('create_user', [args.username]),
+            // The tier is in the key although it is not in the sentence: the
+            // call writes it, and a token issued for an account on the free
+            // tier must not execute one on a tier with different quotas. The
+            // password is in neither, deliberately — it is a live credential,
+            // and both the key's binding and the sentence are read back.
+            resourceKey: orderedResourceKey('create_user', [
+              args.username,
+              args.tier ?? '',
+            ]),
             token: args.confirm_token,
             toolName: 'create_user',
+            ...(args.tier === undefined
+              ? {}
+              : { details: [{ label: 'tier', value: args.tier }] }),
             title: `Create the account "${args.username}"?`,
             hint: 'Tick to create it, leave it to cancel.',
           }
@@ -276,9 +286,15 @@ export function registerAdminWriteTools(
         // to every topic on an instance this server is restricted to one of.
         const topic = api.resolveTopicPattern(args.topic);
 
-        // tupleResourceKey, not setResourceKey: these three are positional and
-        // their vocabularies overlap, so sorting them would let a token
-        // approved for one (user, topic) pair execute the reverse pair.
+        // orderedResourceKey, not setResourceKey: these three are positional
+        // and their vocabularies overlap almost entirely — a username is a
+        // legal topic, and every action name is a legal value for either.
+        // Under a sorted key, confirming "grant alice read_only on topic
+        // deploy" would produce the same key as "grant deploy read_only on
+        // topic alice", so a token approved for one account and topic would
+        // execute a grant on a pair that was never shown to anyone. The
+        // positional key used to be a local tupleResourceKey; since
+        // mcp-approval 0.8.2 the library has it.
         const what =
           args.action === 'revoke'
             ? `remove the access rule for "${args.username}" on topic ` +
@@ -293,7 +309,7 @@ export function registerAdminWriteTools(
             what: what,
             consequence:
               'Access rules take effect immediately for anyone using that account.',
-            resourceKey: tupleResourceKey('manage_user_access', [
+            resourceKey: orderedResourceKey('manage_user_access', [
               args.username,
               topic,
               args.action,

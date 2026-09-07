@@ -91,17 +91,26 @@ arguments overlap in vocabulary — cannot execute the same three values in a
 different order.
 
 Confirmation prompts never quote content that came from ntfy. They name the topic,
-the count or the username and nothing else, because that text is read by a model.
-`create_user`'s prompt also leaves out the **password**: it is a live credential,
-and the prompt is read back both by a person and by a model, so it is in neither
-the text nor the token's binding.
+the count or the username and nothing else, because that text is read by a model;
+values the *caller* chose are shown on their own labelled lines rather than
+interpolated into the server's sentence. `create_user`'s prompt also leaves out the
+**password**: it is a live credential, and the prompt is read back both by a person
+and by a model, so it is in neither the text nor the token's binding.
 
-One thing an approval does **not** prove is freshness. The sealed state carries no
-nonce and verifying it spends nothing, so a retried leg or a gateway that re-sends
-can run an approved operation twice without asking again. Every guarded tool here is
-idempotent in effect, so that lands on the same instance either way; the one
-operation that genuinely acts twice is `publish_message`, which is unguarded, and
-ntfy has no idempotency key that would change it.
+`update_message` binds the content it will write, not only the notification it will
+replace. The call carries the whole content schema — including `actions`, and an
+`http` action button fires from the recipient's device — so a confirmation obtained
+for a corrected typo cannot be redeemed for a call that adds one.
+
+An approval proves freshness as well as binding. The sealed state carries a nonce
+and verifying it spends that nonce, so the same answer cannot be submitted twice —
+a retried leg or a gateway that re-sends is refused rather than executed again.
+The record of what has been spent lives **in this process**, so a restart forgets
+it; a stdio server is spawned per session, which is why that is the right
+lifetime. Every guarded tool here is idempotent in effect anyway, so even the
+forgotten case lands on the same instance. The one operation that genuinely acts
+twice is `publish_message`, which is unguarded, and ntfy has no idempotency key
+that would change it.
 
 See [Asking a person](/guide/approval) for what the dialog contains, which clients
 show one, and what `ELICITATION=false` does and does not change.
@@ -117,6 +126,19 @@ chooses their own username.
 `get_server_info` is the exception, and deliberately so — its four sections are the
 instance's own configuration and counters, set by whoever runs the server this client
 was pointed at, and half of the object is derived locally rather than fetched.
+
+The framing is not the only thing done to that text. Every string this server
+reports from ntfy is stripped of control characters — an escape sequence in a
+notification title is a terminal control sequence in the host's log file, and it
+means nothing in any field here — and of lone surrogates, which survive
+`JSON.stringify` as an escape and then break whichever client has to encode the
+result to UTF-8. Tab, line feed and carriage return are kept: those are content.
+
+Nothing this server sends is trusted for its *shape* either. ntfy's answers are
+read field by field rather than cast to the type they are expected to have, so a
+`time` that is a word, a `tags` that is a number or an `id` that is an integer
+costs that field or that entry — reported as absent, with a count — instead of the
+whole listing it appeared in.
 
 ## get_account and list_users answer from an allowlist
 

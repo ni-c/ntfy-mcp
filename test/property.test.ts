@@ -1,22 +1,27 @@
 import fc from 'fast-check';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import { describe, expect, it } from 'vitest';
 
+import { cleanText } from '../src/clean.js';
 import {
   MAX_ITEM_BYTES,
   MAX_TAGS,
+  messageView,
   PREVIEW_CHARS,
   toView,
 } from '../src/messages.js';
-import { tupleResourceKey } from '../src/resource-key.js';
 
 /**
  * Properties of the two places where an ordering or a budget is the control.
  *
- * `tupleResourceKey` carries a security argument in its own docstring that
- * nothing checked: sorting the targets would make "grant alice read_only on
+ * `manage_user_access` and `update_message` build their confirmation keys with
+ * `orderedResourceKey` from mcp-approval, chosen over `setResourceKey` for a
+ * security argument: sorting the targets would make "grant alice read_only on
  * topic deploy" and "grant deploy read_only on topic alice" the same key, so a
  * confirmation approved for one account and topic would execute a grant on a
- * pair nobody was shown. The property below is that argument, stated.
+ * pair nobody was shown. The properties below are that argument, stated
+ * against the library function the two tools now call — the local
+ * `tupleResourceKey` they used to call is gone.
  *
  * `toView` shapes a message written by whoever could publish to the topic,
  * which on an open instance is anyone who knows its name. Its budgets are the
@@ -30,6 +35,16 @@ type NtfyMessage = Parameters<typeof toView>[0];
 
 const part = fc.stringMatching(/^[a-z0-9]{1,12}$/);
 
+/** `toView` accepts every message the generators below build: each has a string id. */
+const project = (
+  raw: NtfyMessage,
+  options: { preview: boolean }
+): NonNullable<ReturnType<typeof toView>> => {
+  const result = toView(raw, options);
+  if (result === undefined) throw new Error('toView refused a shaped message');
+  return result;
+};
+
 describe('a confirmation key depends on the order of its targets', () => {
   /**
    * The property the docstring argues for. Two different tuples of the same
@@ -41,8 +56,28 @@ describe('a confirmation key depends on the order of its targets', () => {
     fc.assert(
       fc.property(part, part, part, (a, b, c) => {
         fc.pre(a !== b);
-        expect(tupleResourceKey('manage_user_access', [a, b, c])).not.toBe(
-          tupleResourceKey('manage_user_access', [b, a, c])
+        expect(orderedResourceKey('manage_user_access', [a, b, c])).not.toBe(
+          orderedResourceKey('manage_user_access', [b, a, c])
+        );
+      }),
+      RUNS
+    );
+  });
+
+  /**
+   * The bug the choice prevents, shown rather than described: the set key
+   * really does give the swapped pair the same fingerprint, so a tool that
+   * used it on positional arguments would accept one token for both.
+   */
+  it('the set key would have collided on the swap; the ordered key does not', () => {
+    fc.assert(
+      fc.property(part, part, (topic, id) => {
+        fc.pre(topic !== id);
+        expect(setResourceKey('update_message', [topic, id])).toBe(
+          setResourceKey('update_message', [id, topic])
+        );
+        expect(orderedResourceKey('update_message', [topic, id])).not.toBe(
+          orderedResourceKey('update_message', [id, topic])
         );
       }),
       RUNS
@@ -52,8 +87,8 @@ describe('a confirmation key depends on the order of its targets', () => {
   it('the same tuple always fingerprints the same', () => {
     fc.assert(
       fc.property(fc.array(part, { maxLength: 6 }), (parts) => {
-        expect(tupleResourceKey('update_message', parts)).toBe(
-          tupleResourceKey('update_message', [...parts])
+        expect(orderedResourceKey('update_message', parts)).toBe(
+          orderedResourceKey('update_message', [...parts])
         );
       }),
       RUNS
@@ -72,8 +107,8 @@ describe('a confirmation key depends on the order of its targets', () => {
         fc.stringMatching(/^[a-z_]{3,20}$/),
         (parts, first, second) => {
           fc.pre(first !== second);
-          expect(tupleResourceKey(first, parts)).not.toBe(
-            tupleResourceKey(second, parts)
+          expect(orderedResourceKey(first, parts)).not.toBe(
+            orderedResourceKey(second, parts)
           );
         }
       ),
@@ -83,17 +118,18 @@ describe('a confirmation key depends on the order of its targets', () => {
 
   /**
    * Joining cannot be forged. Two different tuples must not collide because
-   * their parts concatenate to the same string — the reason the parts go
-   * through `JSON.stringify` rather than a separator someone picks.
+   * their parts concatenate to the same string — the reason each part carries
+   * its index and the parts go through `JSON.stringify` rather than a
+   * separator someone picks.
    */
   it('parts cannot be merged or split into a matching key', () => {
     fc.assert(
       fc.property(part, part, (a, b) => {
-        expect(tupleResourceKey('op', [a, b])).not.toBe(
-          tupleResourceKey('op', [`${a}${b}`])
+        expect(orderedResourceKey('op', [a, b])).not.toBe(
+          orderedResourceKey('op', [`${a}${b}`])
         );
-        expect(tupleResourceKey('op', [a, b])).not.toBe(
-          tupleResourceKey('op', [a, '', b])
+        expect(orderedResourceKey('op', [a, b])).not.toBe(
+          orderedResourceKey('op', [a, '', b])
         );
       }),
       RUNS
@@ -118,7 +154,7 @@ describe('a message view stays inside its budgets', () => {
         fc.array(fc.string({ maxLength: 200 }), { maxLength: 80 }),
         fc.array(fc.jsonValue(), { maxLength: 12 }),
         (text, tags, actions) => {
-          const view = toView(
+          const view = project(
             message({ message: text, tags, actions } as Partial<NtfyMessage>),
             { preview: false }
           );
@@ -141,12 +177,16 @@ describe('a message view stays inside its budgets', () => {
   it('a preview is cut at the documented length and says that it was', () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 3000 }), (text) => {
-        const view = toView(message({ message: text }), { preview: true });
+        const view = project(message({ message: text }), { preview: true });
+        // Against the *cleaned* text, which is what the projection works on:
+        // the removal of control characters happens before the cut, so a body
+        // that is long only because of them is not a body that gets previewed.
+        const cleaned = cleanText(text);
         if (text.length > PREVIEW_CHARS) {
           expect(view.message_truncated).toBe(true);
           expect(view.message).toHaveLength(PREVIEW_CHARS + 1);
         } else {
-          expect(view.message).toBe(text);
+          expect(view.message).toBe(cleaned);
           expect(view.message_truncated).toBeUndefined();
         }
       }),
@@ -159,7 +199,7 @@ describe('a message view stays inside its budgets', () => {
       fc.property(
         fc.array(fc.string({ maxLength: 40 }), { maxLength: 100 }),
         (tags) => {
-          const view = toView(message({ tags }), { preview: false });
+          const view = project(message({ tags }), { preview: false });
           expect(view.tags?.length ?? 0).toBeLessThanOrEqual(MAX_TAGS);
           if (tags.length > MAX_TAGS) expect(view.tags_truncated).toBe(true);
         }
@@ -168,25 +208,96 @@ describe('a message view stays inside its budgets', () => {
     );
   });
 
-  it('never throws on a message the publisher shaped freely', () => {
+  /**
+   * The generator is the test.
+   *
+   * This property used to draw its fields from `fc.string()`, `fc.integer()`
+   * and `fc.array(fc.string())` — the types `NtfyMessage` declares — and was
+   * green while `toView` threw a `RangeError` on `time: "later"` and a
+   * `TypeError` on `tags: 7`. A generator that respects the declared types
+   * cannot find a value of the wrong type, and its title claimed the opposite.
+   *
+   * So the leaves are arbitrary JSON now, plus the values `JSON.parse` can
+   * produce that `fc.jsonValue()` does not reach: `Infinity` from `1e999`, a
+   * number past the safe range, and a timestamp outside what `Date` holds.
+   */
+  const leaf = fc.oneof(
+    fc.jsonValue(),
+    fc.constantFrom(
+      Infinity,
+      -Infinity,
+      Number.NaN,
+      1e300,
+      -(2 ** 53),
+      8.64e12 + 1,
+      -8.64e12 - 1,
+      Number.MAX_SAFE_INTEGER
+    ),
+    fc.double(),
+    fc.string({ maxLength: 200 })
+  );
+
+  it('never throws, whatever shape the instance sent', () => {
     fc.assert(
       fc.property(
         fc.record(
           {
-            title: fc.string(),
-            message: fc.string(),
-            click: fc.string(),
-            icon: fc.string(),
-            content_type: fc.string(),
-            priority: fc.integer(),
-            tags: fc.array(fc.string(), { maxLength: 40 }),
+            id: leaf,
+            sequence_id: leaf,
+            event: leaf,
+            topic: leaf,
+            time: leaf,
+            title: leaf,
+            message: leaf,
+            click: leaf,
+            icon: leaf,
+            content_type: leaf,
+            priority: leaf,
+            tags: leaf,
+            actions: leaf,
+            attachment: leaf,
           },
           { requiredKeys: [] }
         ),
         (over) => {
           expect(() =>
-            toView(message(over as Partial<NtfyMessage>), { preview: true })
+            toView(over as unknown as NtfyMessage, { preview: true })
           ).not.toThrow();
+        }
+      ),
+      RUNS
+    );
+  });
+
+  it('answers something the output schema accepts, or nothing at all', () => {
+    fc.assert(
+      fc.property(
+        fc.record(
+          {
+            id: leaf,
+            event: leaf,
+            topic: leaf,
+            time: leaf,
+            title: leaf,
+            message: leaf,
+            priority: leaf,
+            tags: leaf,
+            actions: leaf,
+            attachment: leaf,
+            content_type: leaf,
+          },
+          { requiredKeys: [] }
+        ),
+        (over) => {
+          const view = toView(over as unknown as NtfyMessage, {
+            preview: true,
+          });
+          // A refusal is a legitimate answer — an entry with no usable id has
+          // no honest projection. What must never happen is a view the SDK
+          // then refuses, which fails the whole tool call rather than the
+          // entry.
+          if (view === undefined) return;
+          expect(messageView.safeParse(view).success).toBe(true);
         }
       ),
       RUNS

@@ -1,7 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { setResourceKey } from 'mcp-approval';
-import type { Approver, ConfirmationStore } from 'mcp-approval';
+import { orderedResourceKey, setResourceKey } from 'mcp-approval';
+import type {
+  Approver,
+  ConfirmationDetail,
+  ConfirmationStore,
+} from 'mcp-approval';
 import {
   actionSchema,
   confirmTokenParam,
@@ -17,8 +21,9 @@ import {
   topicParam,
 } from '../schema.js';
 
-import type { NtfyApi, NtfyMessage } from '../api.js';
-import { tupleResourceKey } from '../resource-key.js';
+import type { NtfyApi } from '../api.js';
+import { recordOr, stringOf } from '../boundary.js';
+import { errorText } from '../clean.js';
 import { errorResult, jsonResult, run } from '../result.js';
 
 const MAX_TOPICS = 10;
@@ -91,6 +96,43 @@ type ContentArgs = {
   markdown?: boolean | undefined;
   actions?: unknown[] | undefined;
 };
+
+/**
+ * Describes what a call will write, for the person being asked.
+ *
+ * Lengths and counts rather than the text itself. `renderDetails` puts each
+ * line under "supplied by the caller" precisely because these are not the
+ * server's words — and a notification body is somewhere between a sentence and
+ * four kilobytes, which is not a dialog line either way. What the person needs
+ * in order to answer is which fields change, not their contents; what the
+ * *token* needs is the exact values, and that is the key below.
+ */
+function contentDetails(body: Record<string, unknown>): ConfirmationDetail[] {
+  const details: ConfirmationDetail[] = [];
+  for (const [field, value] of Object.entries(body)) {
+    if (typeof value === 'string') {
+      details.push({ label: field, value: `${value.length} characters` });
+    } else if (Array.isArray(value)) {
+      details.push({ label: field, value: `${value.length} entr(ies)` });
+    } else {
+      details.push({ label: field, value: JSON.stringify(value) ?? 'set' });
+    }
+  }
+  return details;
+}
+
+/**
+ * The content a call will write, as one part of its confirmation key.
+ *
+ * Stable because {@link contentBody} assigns the fields in a fixed order, so
+ * the same arguments always serialise identically — the property test holds
+ * that. One part rather than one per field: `orderedResourceKey` prefixes each
+ * part with its index, and a JSON document is delimited by construction, so
+ * nothing here can be split or merged into a matching key.
+ */
+function contentFingerprint(body: Record<string, unknown>): string {
+  return JSON.stringify(body);
+}
 
 function contentBody(args: ContentArgs): Record<string, unknown> {
   const body: Record<string, unknown> = {};
@@ -181,6 +223,10 @@ export function registerMessageWriteTools(
               .string()
               .optional()
               .describe('Pass to update_message to revise this notification.'),
+            note: z
+              .string()
+              .optional()
+              .describe('Set when the publish worked but the id did not.'),
             error: z.string().optional(),
           })
         ),
@@ -217,31 +263,39 @@ export function registerMessageWriteTools(
         const results = [];
         for (const topic of topics) {
           try {
-            const published = (await api.publish({
-              ...base,
-              topic,
-            })) as NtfyMessage;
-            results.push({
-              topic,
-              ok: true,
-              id: published.id,
-              sequence_id: published.id,
-            });
+            const published = await api.publish({ ...base, topic });
+            // `id` and `sequence_id` are declared `z.string()`, so an instance
+            // answering with a number would fail the whole result *after* the
+            // notification has gone out — the one moment when losing the answer
+            // costs something that cannot be retried safely. Omitted with a
+            // note instead: the publish happened either way.
+            const id = stringOf(recordOr(published).id);
+            results.push(
+              id === undefined
+                ? {
+                    topic,
+                    ok: true,
+                    note:
+                      'Published, but ntfy did not return a usable message ' +
+                      'id, so this notification cannot be updated or deleted ' +
+                      'by id.',
+                  }
+                : { topic, ok: true, id, sequence_id: id }
+            );
           } catch (error) {
-            results.push({
-              topic,
-              ok: false,
-              error: error instanceof Error ? error.message : String(error),
-            });
+            results.push({ topic, ok: false, error: errorText(error, 500) });
           }
         }
 
         const failed = results.filter((entry) => !entry.ok).length;
-        return jsonResult({
-          published: results.length - failed,
-          failed,
-          results,
-        });
+        return jsonResult(
+          {
+            published: results.length - failed,
+            failed,
+            results,
+          },
+          'publish_message'
+        );
       })
   );
 
@@ -287,7 +341,12 @@ export function registerMessageWriteTools(
         updated: z.string().describe('The sequence id that was revised.'),
         revision_id: z
           .string()
+          .optional()
           .describe('Id of the revision entry the cache now also holds.'),
+        note: z
+          .string()
+          .optional()
+          .describe('Set when the revision landed but the id did not.'),
       }),
     },
     async (args, mcp) =>
@@ -307,14 +366,24 @@ export function registerMessageWriteTools(
         // here. Turning a delivered alert into a button that calls something is
         // not what publish_message's unguarded outbound-effect argument covers.
         //
-        // tupleResourceKey, not setResourceKey: a topic name and a message id
-        // are both letters and digits, so a sorted key would let a
-        // confirmation for one execute the pair the other way round.
+        // orderedResourceKey, not setResourceKey: a topic name and a message id
+        // are both letters and digits, so a sorted key would give (topic, id)
+        // and (id, topic) the same fingerprint and let a confirmation for one
+        // execute the pair the other way round. The ids in delete_messages
+        // really are a set, which is why that tool stays on setResourceKey.
         //
-        // The content is not in the key. What is confirmed is "revise this
-        // notification", and binding the new text would mean a person had to be
-        // asked again for every corrected typo while proving nothing — the
-        // replacement is only reachable through the same tool call.
+        // The content **is** in the key, and this used to be argued the other
+        // way: binding it means a person is asked again for every corrected
+        // typo, and the replacement is only reachable through the same tool
+        // call anyway. What that argument missed is the gap between the two
+        // legs of the fallback token. The first call is answered with a token
+        // bound to (topic, id); the second call presents that token with
+        // whatever content it likes — so a confirmation obtained for "fix the
+        // typo in the deploy alert" executed a call that added an `http` action
+        // button, which fires from the recipient's phone with a method, headers
+        // and body chosen here. The dialog names the fields (`details`, so the
+        // caller's values are on their own labelled lines rather than in this
+        // server's sentence) and the key binds them.
         const outcome = await approval.requestApproval(
           server,
           mcp,
@@ -325,10 +394,14 @@ export function registerMessageWriteTools(
               `topic "${topic}"`,
             consequence:
               'Subscribers who already received it see it change in place, ' +
-              'and the text they were shown is not recoverable.',
-            resourceKey: tupleResourceKey('update_message', [
+              'and the text they were shown is not recoverable. Everything ' +
+              'listed below is replaced, action buttons included — an "http" ' +
+              "button fires from the recipient's device.",
+            details: contentDetails(body),
+            resourceKey: orderedResourceKey('update_message', [
               topic,
               args.sequence_id,
+              contentFingerprint(body),
             ]),
             token: args.confirm_token,
             toolName: 'update_message',
@@ -342,16 +415,30 @@ export function registerMessageWriteTools(
         }
         if (outcome.decision === 'pending') return outcome.result;
 
-        const updated = (await api.publish({
+        const updated = await api.publish({
           ...body,
           topic,
           sequence_id: args.sequence_id,
-        })) as NtfyMessage;
-        return jsonResult({
-          topic,
-          updated: args.sequence_id,
-          revision_id: updated.id,
         });
+        const revisionId = stringOf(recordOr(updated).id);
+        return jsonResult(
+          {
+            topic,
+            updated: args.sequence_id,
+            // Optional in the schema for the same reason as in
+            // `publish_message`: the revision is applied by the time this is
+            // read, so an id ntfy sent in an unexpected shape must not turn a
+            // completed write into a failed call.
+            ...(revisionId === undefined
+              ? {
+                  note:
+                    'The revision was applied, but ntfy did not return a ' +
+                    'usable id for the revision entry.',
+                }
+              : { revision_id: revisionId }),
+          },
+          'update_message'
+        );
       })
   );
 
@@ -398,11 +485,11 @@ export function registerMessageWriteTools(
             results.push({
               id,
               ok: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: errorText(error, 500),
             });
           }
         }
-        return jsonResult({ topic, results });
+        return jsonResult({ topic, results }, 'per-id');
       })
   );
 
@@ -484,11 +571,11 @@ export function registerMessageWriteTools(
             results.push({
               id,
               ok: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: errorText(error, 500),
             });
           }
         }
-        return jsonResult({ topic, results });
+        return jsonResult({ topic, results }, 'per-id');
       })
   );
 }

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.3.0] - 2026-09-07
 
 ### Added
 
@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot drift.
 - An OpenSSF Scorecard run, weekly and on every push to `main`, reporting into
   the Security tab next to CodeQL and Trivy. The badge is the second in the row.
+- `actions/dependency-review-action` on every pull request. `npm audit` checks
+  the tree as it is; this checks the change, so a vulnerable dependency is
+  answered on the pull request rather than after it is merged.
 
 ### Changed
 
@@ -31,15 +34,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `src/` this package does not ship — so a stack trace under that flag named a
   file nobody could open. `dist/**/*.js` is unchanged; the package is about a
   fifth smaller.
-
-### Changed
-
 - The loopback check behind the plain-HTTP warning comes from
   `mcp-internal-hosts` instead of a copy in `config.ts`. Same classifier the
   rest of the family uses, same behaviour — one fewer place to keep 25 lines of
   hand-written IPv6 normalisation correct.
+- `NTFY_URL` is stored as `origin + pathname` rather than as the environment
+  string. A query or a fragment can no longer be glued in front of every path
+  the server builds, and what was dropped is named on the startup line.
+- `time` is optional in a message view, with `time_unavailable` beside it when
+  ntfy's timestamp is missing or outside the range `Date` can hold. Reporting
+  the absence beats inventing a timestamp, and both beat the `RangeError` that
+  used to take the whole listing with it.
+- `NTFY_TOPICS` accepts at most 256 entries. The list is walked once per access
+  grant when `list_users` projects them, so a longer one is a cost on every call
+  rather than a restriction.
 
-[Unreleased]: https://github.com/ni-c/ntfy-mcp/compare/v0.2.0...HEAD
+### Security
+
+- **mcp-approval 0.8.2.** A sealed dialog answer is single-use since 0.8.1: the same `requestState` presented again within its lifetime used to be accepted again, and with a resource key that is the same every time — a whole stream, a fixed set of targets — every replay landed. npm users on `^0.8.0` already had the fix; the Docker image is built from the lockfile and carried 0.8.0 until this release.
+- **Approval keys bound to positions.** `manage_user_access` is confirmed on (username, topic, action) and `update_message` on (topic, message id), and in both the vocabularies overlap: a username is a legal topic name, a twelve-character message id is one too. A key built from a _sorted_ set of those parts would let a token issued for "grant alice read_only on topic deploy" also confirm "grant deploy read_only on topic alice", and a token for revising message `a…` on topic `b…` also confirm the pair the other way round. This server never had that bug — it carried its own positional `tupleResourceKey` — but the local copy is gone: both tools now build their keys with `orderedResourceKey` from mcp-approval 0.8.2, which prefixes every part with its index before fingerprinting. `create_user` and `delete_user` and `delete_messages` stay on `setResourceKey`, where a single value or a genuine set is what is confirmed.
+- **The credential can no longer reach the model.** A credential travels in an `Authorization` header, and the HTTP layer's refusal of a malformed header value **quotes the value** — verified on undici 8.10 and on Node's global `fetch`. That refusal is an ordinary rejected promise, which a tool handler turns into a tool result, so an `NTFY_TOKEN` with a line break in the middle of it — a wrapped paste, or `$(cat token)` of a wrapped file — put the whole token in the model's context. Both halves are closed: `loadConfig` refuses a credential that cannot travel in a header at startup, naming the variable, the length and the _position_ of the offending character and never the value; and every request checks the header before sending, which also covers a `Config` built without `loadConfig`.
+- **`update_message` binds the content it will write.** The confirmation used to be keyed on the topic and the notification id alone, deliberately, so that fixing a typo did not need a second dialog. The gap that left is between the two legs of the fallback token: the first call is answered with a token bound to (topic, id), and the second presents it with whatever content it likes — and the tool carries the whole content schema, `actions` included, where an `http` button fires from the recipient's device with a method, headers and body chosen by the caller. A confirmation obtained for a corrected typo could be redeemed for a call that added a button. The content is now part of the key, and the dialog names the fields it will replace through `details`, so the caller's text appears on its own labelled line instead of inside this server's sentence. `create_user` binds its `tier` the same way.
+- **Nothing ntfy sends is trusted for its shape.** Every response used to be a TypeScript cast — `JSON.parse(...) as NtfyMessage` — and an exported interface with a docblock on every field reads like a check without being one. A `time` that is a word or `1e999` answered `RangeError: Invalid time value` out of `toISOString()`, and `tags: 7` answered `tags.slice is not a function`; both were thrown from inside a `map` over a listing, so one message made every other message in the answer unreachable. An `id`, `title` or `priority` of the wrong type broke the tool's own `outputSchema` instead, which the SDK refuses as `Output validation error` for the whole call. A new `boundary.ts` reads each field for what it is, and each caller decides per field: omit it, skip the entry and count it, or say in a sentence that it was unusable — never widen the schema. A property test drives every read tool from arbitrary JSON, including the `1e999` that only exists in the serialised text.
+- **Control characters and lone surrogates are removed from everything reported.** There was no cleaner at all: the per-field cap bounded length and nothing else, so an escape sequence in a notification title — which anybody who knows a topic name can publish — was a terminal control sequence in the host's log file and in whatever renders the result, and a lone surrogate survived `JSON.stringify` as an escape only to raise `UnicodeEncodeError` in a client encoding the result to UTF-8. A cut can produce one on its own by landing between the halves of a pair, so every cut is followed by `toWellFormed()`. Applied to titles, bodies, tags, action buttons, usernames, grant patterns, token labels and the `get_server_info` sections; tab, line feed and carriage return are kept, because those are content.
+- **A refused login is not sent again straight away.** ntfy keeps a failed-authentication limiter **per visitor address** — `authLimiter` in `server/visitor.go`, spent by `maybeAuthenticate` in `server/server_auth.go` on every 401 it answers — and once its budget is gone the instance answers `42909` to _every_ request from that address, healthy traffic included. Every read tool here is annotated read-only, idempotent and cheap and answers a wrong credential with "check NTFY_TOKEN", which is exactly what a model retries; `check_topic_access` alone could spend ten of the thirty tokens in one call. A 401 is now remembered for ten seconds and repeated from memory with a note saying when the next real attempt is possible. Only a 401: a 403 is ntfy saying the account exists and may not have this topic, which costs the limiter nothing and is the per-topic answer `check_topic_access` exists to report.
+- **`mcp-publisher` is pinned and its checksum verified.** Both jobs that publish to the MCP registry hold `id-token: write` and fetched the binary from `releases/latest/download`, piped straight into `tar` — whatever the upstream served that day, executed with the OIDC token available. Pinned to `v1.8.1` and checked against the sha256 that release published.
+- **The runtime image no longer ships yarn or corepack.** npm had been removed by hand; the other two package managers the base image carries had not, which is easy to miss because nothing references them.
+
+### Fixed
+
+- **The result budget measured a string nobody received.** `list_messages` counted a compact `JSON.stringify` of the envelope and then emitted the same value indented, behind a marker sentence — between a fifth and several times larger. The budget now measures the rendering. Three tools had no ceiling at all: `get_server_info` passed four instance documents through whole, `get_account` the `limits`, `stats` and token metadata, and `list_users` an unbounded username and grant list per account, so a single call could answer with several megabytes. Each now has a ceiling of its own that shrinks or reports rather than sending, and the shrinking loop no longer re-serialises the whole envelope once per dropped entry.
+- **The status of a response is decided before its body is read.** Both request paths read the body under the _success_ ceiling first, so a reverse proxy answering a 401 with a two-megabyte login page surfaced as "ntfy returned more than 2000000 bytes", thrown as a plain `Error` from inside the reader — no status, so no typed error, so no credential hint, no admin note, and nothing for `check_topic_access` to report per topic. Error bodies now have their own 64 KiB ceiling that cuts instead of refusing.
+- **A message from ntfy no longer reaches the model as this server's words.** `get_server_info`'s per-section failures and the per-id results of `publish_message`, `mark_messages_read` and `delete_messages` quoted `error.message` verbatim — which is not always this server's sentence: undici quotes a header value it refuses, and Node's TLS layer quotes the certificate's names, chosen by whatever answered on the port.
+- **`check_topic_access` has a budget for the call, not only per request.** Ten topics at the fifteen-second request timeout is two and a half minutes on a tool the annotations call cheap. What is not reached inside thirty seconds is reported as `not_checked` rather than left out — an absent entry reads as an answer.
+- **A stream line that is valid JSON but not an object no longer fails the poll.** `null`, `42` and `[1,2]` are all legal NDJSON, and reading `.event` off one threw out of the listing. The same for an error body: reading `.code` off a `null` threw from inside a constructor.
+- **Diagnostics no longer echo a value that might be the secret.** `ELICITATION` printed whatever it was given in full, and `NTFY_URL` printed the _scheme_ of a value it refused — a 56-character hexadecimal key with a colon after it is a valid URL whose scheme is the key. Only short, word-shaped values are quoted now; everything else is described by its length.
+- **The trailing-slash strip on `NTFY_URL` was quadratic.** `url.replace(/\/+$/, '')` is retried from every position of a run that is not at the end of the string: 122 ms, 577 ms and 2233 ms for 20 000, 40 000 and 80 000 slashes followed by one more character. An index walk replaces it, and a `linear-time` suite now holds every such function at the largest input it can be given.
 
 ## [0.2.0] - 2026-09-03
 

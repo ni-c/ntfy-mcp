@@ -94,9 +94,26 @@ jobs:
           done
           echo "Image tag $version never appeared on GHCR — is ci.yml's publish job green?" >&2
           exit 1
+      # Pinned to a release tag and checked against the checksum that release
+      # published. `releases/latest/download` in a job holding `id-token: write`
+      # runs whatever the upstream serves that day, with the OIDC token
+      # available to it; and piping curl straight into tar means the bytes are
+      # executed before anything has looked at them.
+      #
+      # Refresh both the tag and the digest together — a tag bumped without the
+      # digest is a pin that verifies the wrong thing.
       - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl -fsSL -o "$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum --check --strict
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive"
       - run: ./mcp-publisher login github-oidc
       - run: ./mcp-publisher publish
 
@@ -124,5 +141,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md

@@ -82,6 +82,89 @@ export function missingConfigKeys(config: Config): string[] {
 const TOPIC_PATTERN = /^[-_A-Za-z0-9]{1,64}$/;
 
 /**
+ * Ceiling on how many topics `NTFY_TOPICS` may name.
+ *
+ * The list is walked once per grant in `list_users`, so it is one half of a
+ * product the operator would not expect to be quadratic; and a list of thousands
+ * is a paste accident rather than a configuration.
+ */
+const MAX_TOPICS_CONFIGURED = 256;
+
+/**
+ * What a credential may look like: visible ASCII, no leading or trailing space,
+ * a plausible length.
+ *
+ * The check exists because of what happens without it. A credential goes into an
+ * `Authorization` header, and the HTTP layer's refusal of a bad header value
+ * **quotes the value** — so a token with a line break in the middle, which is
+ * what a wrapped paste or a `$(cat token)` of a wrapped file produces, reaches
+ * the model's context in full through a tool result. `assertHeaderValue` in
+ * `api.ts` is the other half of that guarantee, for a `Config` built without
+ * this function.
+ *
+ * A trailing newline is trimmed rather than refused: `$(cat token)` leaves one,
+ * and that is a formatting accident with an obvious correct reading.
+ */
+const CREDENTIAL_PATTERN =
+  /^[\x21-\x7e][\x20-\x7e]{0,510}[\x21-\x7e]$|^[\x21-\x7e]$/;
+
+/**
+ * Complains about a credential's shape without ever printing it.
+ *
+ * Names the variable, the length and the *position* of the first character that
+ * cannot travel in a header — enough to find a line break in a pasted secret,
+ * and nothing that could be the secret.
+ */
+function credentialProblem(name: string, value: string): string | undefined {
+  if (value.length === 0) return `${name} is set but empty.`;
+  if (CREDENTIAL_PATTERN.test(value)) return undefined;
+  const characters = [...value];
+  const index = characters.findIndex(
+    (character) => character < '\x21' || character > '\x7e'
+  );
+  if (index === -1) {
+    return (
+      `${name} is ${value.length} characters long; this server accepts up to ` +
+      '512. The value is not shown.'
+    );
+  }
+  return (
+    `${name} contains a character that cannot travel in an HTTP header (or a ` +
+    `leading or trailing space), at position ${index + 1} of ` +
+    `${characters.length}. A line break there is usually a paste that wrapped. ` +
+    'The value is not shown.'
+  );
+}
+
+/**
+ * Quotes a configuration value only when its shape makes that safe.
+ *
+ * The variable next to a secret is where a secret lands, and a value that fails
+ * the parser is the one most likely to *be* the secret — so the branch that
+ * explains a typo may only quote something short and word-shaped, and describes
+ * everything else by its length.
+ */
+function quotable(raw: string): string {
+  return /^[A-Za-z0-9_.:/-]{1,24}$/.test(raw)
+    ? `"${raw}"`
+    : `a ${raw.length}-character value (not shown)`;
+}
+
+/**
+ * Removes trailing slashes by walking an index.
+ *
+ * `url.replace(/\/+$/, '')` is quadratic on a run that is not at the end: the
+ * pattern is retried from every position of the run and consumes it each time.
+ * Measured on the string an operator can set: 122 ms, 577 ms and 2233 ms for
+ * 20 000, 40 000 and 80 000 slashes followed by one more character.
+ */
+function withoutTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return value.slice(0, end);
+}
+
+/**
  * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
  * anything it does not recognise.
  *
@@ -99,8 +182,11 @@ export function parseElicitation(raw: string | undefined): boolean {
   const value = raw?.trim().toLowerCase();
   if (value === undefined || value === '' || value === 'true') return true;
   if (value === 'false') return false;
+  // Describes rather than echoes past a short, word-shaped value. ELICITATION
+  // is unprefixed and sits in the same block as every other variable of every
+  // server in the environment, which includes the ones holding secrets.
   console.error(
-    `ntfy-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+    `ntfy-mcp: ELICITATION must be "true" or "false" — got ${quotable(raw ?? '')}. ` +
       'Refusing to start rather than guess.'
   );
   process.exit(1);
@@ -116,9 +202,12 @@ export function parseElicitation(raw: string | undefined): boolean {
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const url = env.NTFY_URL;
-  const token = env.NTFY_TOKEN;
-  const username = env.NTFY_USERNAME;
-  const password = env.NTFY_PASSWORD;
+  // Trimmed before anything looks at them: `$(cat token)` leaves a trailing
+  // newline, and reading that as "a token with a bad character in it" would be
+  // pedantic about the one case with an obvious correct reading.
+  const token = env.NTFY_TOKEN?.trim();
+  const username = env.NTFY_USERNAME?.trim();
+  const password = env.NTFY_PASSWORD?.trim();
   const rawTopics = env.NTFY_TOPICS;
   // Strict on purpose, and the opposite of NTFY_READ_ONLY below. This one
   // *removes* a protection, so the direction that fails safe is refusing
@@ -171,6 +260,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     process.exit(1);
   }
 
+  // Before a request can quote it. The credential travels in an Authorization
+  // header, and the HTTP layer's refusal of a bad header value quotes the value
+  // in an ordinary error — which a tool handler turns into a tool result.
+  for (const [name, value] of [
+    ['NTFY_TOKEN', token],
+    ['NTFY_USERNAME', username],
+    ['NTFY_PASSWORD', password],
+  ] as const) {
+    if (value === undefined) continue;
+    const problem = credentialProblem(name, value);
+    if (problem !== undefined) {
+      console.error(`ntfy-mcp: ${problem}`);
+      process.exit(1);
+    }
+  }
+
   let credentials: Credentials = { kind: 'anonymous' };
   if (token) {
     credentials = { kind: 'token', token };
@@ -204,8 +309,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     process.exit(1);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    // The scheme is not safe to print either. A 56-character hexadecimal key
+    // with a colon after it is a valid URL whose scheme is the key, so this
+    // branch — the one written for an operator's typo — is reached by exactly
+    // the value that must not be echoed.
     console.error(
-      `ntfy-mcp: NTFY_URL must use http:// or https:// (got ${parsed.protocol})`
+      `ntfy-mcp: NTFY_URL must use http:// or https:// (got a ` +
+        `${parsed.protocol.length - 1}-character scheme, not shown)`
     );
     process.exit(1);
   }
@@ -239,8 +349,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  // The parsed form, not the environment string. Everything a URL can carry
+  // that a base cannot use — a query, a fragment, embedded credentials — would
+  // otherwise be glued in front of every path this server builds. What was
+  // dropped is named, because silently ignoring half of what somebody typed is
+  // how a request ends up somewhere they did not mean.
+  const base = withoutTrailingSlashes(parsed.origin + parsed.pathname);
+  const droppedParts = [
+    parsed.search ? 'a query string' : '',
+    parsed.hash ? 'a fragment' : '',
+  ].filter((part) => part.length > 0);
+  if (droppedParts.length > 0) {
+    console.error(
+      `ntfy-mcp: NTFY_URL carried ${droppedParts.join(' and ')}, which a base ` +
+        'URL cannot use. It was dropped.'
+    );
+  }
+
   return {
-    url: url.replace(/\/+$/, ''),
+    url: base,
     credentials,
     topics,
     insecureTls,
@@ -257,6 +384,15 @@ function parseTopics(raw: string | undefined): readonly string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+  if (entries.length > MAX_TOPICS_CONFIGURED) {
+    console.error(
+      `ntfy-mcp: NTFY_TOPICS names ${entries.length} topics; this server ` +
+        `accepts up to ${MAX_TOPICS_CONFIGURED}. The list is walked once per ` +
+        'access grant when list_users projects them, so a list this long is a ' +
+        'cost on every call rather than a restriction.'
+    );
+    process.exit(1);
+  }
   for (const [index, entry] of entries.entries()) {
     if (!TOPIC_PATTERN.test(entry)) {
       // Position, not value. NTFY_TOPICS is the variable a misplaced line in a

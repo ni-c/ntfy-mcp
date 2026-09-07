@@ -68,6 +68,15 @@ jobs:
       # --ignore-scripts: an audit must not execute the code it is auditing.
       - run: npm ci --ignore-scripts
       - run: npm audit --audit-level=high
+      # A different question from `npm audit`, which checks the tree as it is:
+      # this checks the *change*, so a pull request that introduces a vulnerable
+      # or newly-licensed dependency is answered on the pull request rather than
+      # after it is merged. Only meaningful on a pull request — there is no base
+      # to compare a push against.
+      - if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
 
   codeql:
     # Code scanning needs GitHub Advanced Security, which a private repository
@@ -183,7 +192,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # --ignore-scripts here too: nothing in the tree needs a lifecycle hook,
+      # and a job that starts a container from a third party's image is not the
+      # one to relax it in.
+      - run: npm ci --ignore-scripts
       # The suite spawns dist/index.js, not src/. Building is not optional.
       - run: npm run build
       - name: Start ntfy

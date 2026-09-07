@@ -113,6 +113,13 @@ export async function connect(
     server.connect(serverTransport),
     client.connect(clientTransport),
   ]);
+  // Once per connection, so every `callTool` in every suite runs the SDK's
+  // *client-side* schema check on the success path. Without the listing the
+  // client has no schema to check against, and a closed `outputSchema` that
+  // refuses a field the handler really returns stays green through every test
+  // — while every validating client in the world gets a protocol error on that
+  // tool's every successful call.
+  await client.listTools();
   return {
     client,
     calls,
@@ -132,7 +139,7 @@ export async function toolNames(
 ): Promise<string[]> {
   const { client } = await connect(overrides);
   const { tools } = await client.listTools();
-  return tools.map((tool) => tool.name).sort();
+  return tools.map((tool) => tool.name).toSorted();
 }
 
 /** The confirmation token a guarded tool handed back on its first call. */

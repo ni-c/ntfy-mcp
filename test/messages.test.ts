@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { NtfyMessage } from '../src/api.js';
+import { untrustedBytes } from '../src/result.js';
 import {
   buildEnvelope,
   MAX_FIELD_CHARS,
@@ -22,9 +23,25 @@ function message(overrides: Partial<NtfyMessage> = {}): NtfyMessage {
   };
 }
 
+/**
+ * `toView` may refuse a message — an entry with no usable id cannot be named,
+ * so it has no honest projection. Every test below is about a *readable*
+ * message, and says so once here rather than with an assertion at each use.
+ */
+function readable(
+  raw: NtfyMessage,
+  options: { preview: boolean }
+): NonNullable<ReturnType<typeof toView>> {
+  const result = toView(raw, options);
+  if (result === undefined) {
+    throw new Error('toView refused a message this test expects it to accept');
+  }
+  return result;
+}
+
 describe('toView', () => {
   it('renders the timestamp as something readable', () => {
-    expect(toView(message(), { preview: false }).time).toBe(
+    expect(readable(message(), { preview: false }).time).toBe(
       '2026-08-27T08:41:02.000Z'
     );
   });
@@ -33,32 +50,35 @@ describe('toView', () => {
     // ntfy leaves sequence_id out there — the message's own id *is* its
     // sequence id — and reporting `updates: <own id>` would read as a message
     // revising itself.
-    expect(toView(message(), { preview: false }).updates).toBeUndefined();
+    expect(readable(message(), { preview: false }).updates).toBeUndefined();
     expect(
-      toView(message({ sequence_id: 'XGe5RN8RdcGO' }), { preview: false })
+      readable(message({ sequence_id: 'XGe5RN8RdcGO' }), { preview: false })
         .updates
     ).toBeUndefined();
   });
 
   it('reports "updates" on a revision', () => {
     expect(
-      toView(message({ id: 'bbbbbbbbbbbb', sequence_id: 'aaaaaaaaaaaa' }), {
+      readable(message({ id: 'bbbbbbbbbbbb', sequence_id: 'aaaaaaaaaaaa' }), {
         preview: false,
       }).updates
     ).toBe('aaaaaaaaaaaa');
   });
 
   it('previews a long body and says it did', () => {
-    const view = toView(message({ message: 'x'.repeat(PREVIEW_CHARS + 10) }), {
-      preview: true,
-    });
+    const view = readable(
+      message({ message: 'x'.repeat(PREVIEW_CHARS + 10) }),
+      {
+        preview: true,
+      }
+    );
     expect(view.message_truncated).toBe(true);
     expect(view.message).toHaveLength(PREVIEW_CHARS + 1);
   });
 
   it('leaves the body intact when not previewing', () => {
     const body = 'x'.repeat(PREVIEW_CHARS + 10);
-    const view = toView(message({ message: body }), { preview: false });
+    const view = readable(message({ message: body }), { preview: false });
     expect(view.message).toBe(body);
     expect(view.message_truncated).toBeUndefined();
   });
@@ -69,7 +89,7 @@ describe('buildEnvelope', () => {
     const messages = Array.from({ length: 10 }, (_unused, index) =>
       message({ id: `id${String(index).padStart(9, '0')}` })
     );
-    const envelope = buildEnvelope(['alerts'], messages, 3);
+    const envelope = buildEnvelope(['alerts'], messages, 3, untrustedBytes);
     expect(envelope.count).toBe(3);
     expect(envelope.messages.map((view) => view.id)).toEqual([
       'id000000007',
@@ -86,7 +106,7 @@ describe('buildEnvelope', () => {
     const messages = Array.from({ length: 5 }, (_unused, index) =>
       message({ id: `id${String(index).padStart(9, '0')}` })
     );
-    const envelope = buildEnvelope(['alerts'], messages, 2);
+    const envelope = buildEnvelope(['alerts'], messages, 2, untrustedBytes);
     expect(envelope.next_since).toBe('id000000004');
   });
 
@@ -100,9 +120,11 @@ describe('buildEnvelope', () => {
         tags: Array.from({ length: MAX_TAGS }, () => 'g'.repeat(60)),
       })
     );
-    const envelope = buildEnvelope(['alerts'], messages, 400);
-    const size = Buffer.byteLength(JSON.stringify(envelope), 'utf8');
-    expect(size).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    const envelope = buildEnvelope(['alerts'], messages, 400, untrustedBytes);
+    // Measured as emitted, not as a value: the marker sentence, the two
+    // marker fields and two-space indentation are part of what the caller
+    // receives, and the budget used to be checked against a string nobody got.
+    expect(untrustedBytes(envelope)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
     expect(envelope.next_since).toBe('id000000399');
     expect(envelope.dropped).toBeGreaterThan(0);
     // Still valid JSON with an intact envelope, which is the whole point.
@@ -119,10 +141,8 @@ describe('buildEnvelope', () => {
       tags: Array.from({ length: 10_000 }, () => 'g'.repeat(200)),
       actions: [{ blob: 'x'.repeat(MAX_RESULT_BYTES * 2) }],
     });
-    const envelope = buildEnvelope(['alerts'], [huge], 50);
-    expect(
-      Buffer.byteLength(JSON.stringify(envelope), 'utf8')
-    ).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    const envelope = buildEnvelope(['alerts'], [huge], 50, untrustedBytes);
+    expect(untrustedBytes(envelope)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
     // Still usable: the cursor survives and the caller is told what was cut.
     expect(envelope.next_since).toBe(huge.id);
     expect(envelope.messages[0]?.oversized).toBe(true);
@@ -130,13 +150,13 @@ describe('buildEnvelope', () => {
   });
 
   it('says nothing about truncation when nothing was truncated', () => {
-    const envelope = buildEnvelope(['alerts'], [message()], 50);
+    const envelope = buildEnvelope(['alerts'], [message()], 50, untrustedBytes);
     expect(envelope.dropped).toBeUndefined();
     expect(envelope.note).toBeUndefined();
   });
 
   it('handles an empty result', () => {
-    const envelope = buildEnvelope(['alerts'], [], 50);
+    const envelope = buildEnvelope(['alerts'], [], 50, untrustedBytes);
     expect(envelope.count).toBe(0);
     expect(envelope.next_since).toBeUndefined();
   });
@@ -145,7 +165,7 @@ describe('buildEnvelope', () => {
     // ntfy limits the message body to 4096 bytes and rejects an oversized JSON
     // publish — but a 60 000-character title goes straight through the header
     // form of the publish API, verified against 2.19.2.
-    const view = toView(
+    const view = readable(
       message({
         title: 'T'.repeat(100_000),
         tags: Array.from({ length: 5000 }, (_u, i) => `tag-${i}`),
@@ -160,7 +180,7 @@ describe('buildEnvelope', () => {
   });
 
   it('drops structured fields it cannot trim, and says so', () => {
-    const view = toView(
+    const view = readable(
       message({ actions: [{ body: 'x'.repeat(MAX_ITEM_BYTES * 2) }] }),
       { preview: false }
     );
@@ -172,7 +192,7 @@ describe('buildEnvelope', () => {
   });
 
   it('leaves an ordinary message untouched', () => {
-    const view = toView(
+    const view = readable(
       message({ title: 'Deploy', tags: ['rocket'], actions: [{ a: 1 }] }),
       { preview: false }
     );

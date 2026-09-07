@@ -4,6 +4,7 @@ import {
   type RequestInit as UndiciRequestInit,
 } from 'undici';
 
+import { isRecord } from './boundary.js';
 import {
   missingConfigKeys,
   missingConfigMessage,
@@ -11,6 +12,66 @@ import {
 } from './config.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * How long a refused credential is remembered and answered from memory.
+ *
+ * Not politeness, and not this server's own rate limit. ntfy keeps a
+ * **per-visitor** limiter for failed authentication — `authLimiter` in
+ * `server/visitor.go`, sized by `VisitorAuthFailureLimitBurst` (30) and
+ * `-Replenish` (one per minute) — and `maybeAuthenticate` in
+ * `server/server_auth.go` spends a token on every 401 it answers. When the
+ * bucket runs dry, `AuthAllowed()` is false and the instance answers
+ * `42909` to **every** request from that address, not only the authenticated
+ * ones: a retry loop does not lock the account, it takes the whole host off the
+ * instance, healthy traffic included.
+ *
+ * What makes a retry loop likely is this server's own shape: every read tool is
+ * annotated read-only, idempotent and cheap, and the answer to a wrong
+ * credential is a sentence that says "Check NTFY_TOKEN" — which is exactly what
+ * a model tries again. `check_topic_access` alone can spend ten of the thirty
+ * tokens in one call.
+ *
+ * Only a 401 is remembered. A 403 is ntfy answering that the account exists and
+ * may not have this topic, which costs the limiter nothing and is a per-topic
+ * answer `check_topic_access` reports rather than a credential to stop using.
+ */
+const AUTH_COOLDOWN_MS = 10_000;
+
+/** Ceiling on an error body, which is read for its sentence, not its data. */
+const MAX_ERROR_BODY_BYTES = 65_536;
+
+/**
+ * Refuses a header value the HTTP layer would refuse, before it reaches the
+ * HTTP layer.
+ *
+ * undici's message for a bad header value **quotes the value**, and the value
+ * here is `Bearer <the ntfy token>` or `Basic <base64 of the password>`. That
+ * message becomes an ordinary rejected promise, which the tool handler's generic
+ * catch turns into a tool result — so a token with a line break in the middle of
+ * it, which is what a wrapped paste or a `$(cat token)` of a wrapped file looks
+ * like, puts the whole credential in the model's context. Verified on undici
+ * 8.10 and on Node's global fetch, which share the implementation.
+ *
+ * `loadConfig` checks the same shape at startup and says so without echoing;
+ * this is the half that also holds for a `Config` built by hand, which is what
+ * every test in this repository does.
+ */
+export function assertHeaderValue(name: string, value: string): void {
+  // Visible ASCII and the space, which is what an HTTP field value may carry.
+  if (!/^[\x20-\x7e]*$/.test(value)) {
+    const index = [...value].findIndex(
+      (character) => character < '\x20' || character > '\x7e'
+    );
+    throw new Error(
+      `the ${name} header this server would send contains a character that ` +
+        `is not allowed in one, at position ${index + 1} of ${value.length}. ` +
+        'This is the configured credential — check NTFY_TOKEN or ' +
+        'NTFY_PASSWORD for a line break from a wrapped paste. The value is ' +
+        'not shown.'
+    );
+  }
+}
 
 /**
  * Hard ceiling on a response body.
@@ -53,8 +114,12 @@ export class NtfyApiError extends Error {
 
 function parseErrorCode(body: string): number | undefined {
   try {
-    const parsed = JSON.parse(body) as NtfyErrorBody;
-    return typeof parsed.code === 'number' ? parsed.code : undefined;
+    // `isRecord` before the field: an error body of `null` or `42` is legal
+    // JSON, and reading `.code` off it throws from a constructor.
+    const parsed: unknown = JSON.parse(body);
+    if (!isRecord(parsed)) return undefined;
+    const code = (parsed as NtfyErrorBody).code;
+    return typeof code === 'number' && Number.isFinite(code) ? code : undefined;
   } catch {
     return undefined;
   }
@@ -101,6 +166,13 @@ export class NtfyApi {
    */
   private readonly insecureDispatcher?: Agent;
   private accountCache?: { at: number; value: unknown };
+  /**
+   * The last refused authentication, kept for {@link AUTH_COOLDOWN_MS}.
+   *
+   * Deliberately not cleared anywhere: a retry that happens to be the second
+   * failed login inside the same second is exactly what the cooldown is for.
+   */
+  private authRefusal?: { at: number; status: number; body: string };
 
   constructor(config: Config) {
     this.config = config;
@@ -238,9 +310,14 @@ export class NtfyApi {
       throw new Error(missingConfigMessage(missing));
     }
 
+    // Before the request rather than after it fails: the runtime's own refusal
+    // quotes the header value, and this header value is the credential.
     const headers: Record<string, string> = { Accept: init.accept };
     const auth = this.authHeader();
-    if (auth !== undefined) headers.Authorization = auth;
+    if (auth !== undefined) {
+      assertHeaderValue('Authorization', auth);
+      headers.Authorization = auth;
+    }
 
     const request: RequestInit = {
       method,
@@ -304,20 +381,109 @@ export class NtfyApi {
     return chunks.join('');
   }
 
+  /**
+   * Reads an error body under its own, much smaller ceiling — and cuts rather
+   * than refusing.
+   *
+   * The success ceiling must not decide what an error says. A reverse proxy
+   * answering a 401 with a two-megabyte login page used to surface as "ntfy
+   * returned more than 2000000 bytes", thrown as a plain `Error` from inside the
+   * reader: no status, so no {@link NtfyApiError}, so no hint, no admin note,
+   * and nothing for `check_topic_access` to report per topic — one oversized
+   * page was the whole answer to a call about ten topics.
+   */
+  private static async readErrorBody(response: Response): Promise<string> {
+    try {
+      const body = response.body;
+      if (!body) return (await response.text()).slice(0, MAX_ERROR_BODY_BYTES);
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      const chunks: string[] = [];
+      let total = 0;
+      try {
+        while (total < MAX_ERROR_BODY_BYTES) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          chunks.push(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+      chunks.push(decoder.decode());
+      return chunks.join('').slice(0, MAX_ERROR_BODY_BYTES);
+    } catch {
+      // The status is the answer; a body that could not be read is not a
+      // reason to lose it.
+      return '(the error body could not be read)';
+    }
+  }
+
+  /**
+   * The remembered refusal, if it is still inside the cooldown.
+   *
+   * Repeated rather than suppressed: the caller asked a question and gets the
+   * same answer it would have got, with a sentence saying it did not travel.
+   */
+  private cachedAuthRefusal(
+    method: string,
+    path: string
+  ): NtfyApiError | undefined {
+    const refusal = this.authRefusal;
+    if (!refusal) return undefined;
+    const elapsed = Date.now() - refusal.at;
+    if (elapsed >= AUTH_COOLDOWN_MS) return undefined;
+    const seconds = Math.ceil((AUTH_COOLDOWN_MS - elapsed) / 1000);
+    return new NtfyApiError(
+      refusal.status,
+      `${refusal.body}\n(repeated from memory — this credential was refused ` +
+        `less than ${AUTH_COOLDOWN_MS / 1000} seconds ago and was not sent ` +
+        `again. ntfy counts failed logins per address and answers 42909 to ` +
+        `every request from it once the budget is spent. Next real attempt ` +
+        `possible in ${seconds} second(s).)`,
+      method,
+      path
+    );
+  }
+
+  /**
+   * Turns a non-2xx response into the error the callers understand.
+   *
+   * Status first, body second — see {@link readErrorBody}.
+   */
+  private async failure(
+    response: Response,
+    method: string,
+    path: string
+  ): Promise<NtfyApiError> {
+    const body = await NtfyApi.readErrorBody(response);
+    if (response.status === 401) {
+      this.authRefusal = { at: Date.now(), status: response.status, body };
+    }
+    return new NtfyApiError(response.status, body, method, path);
+  }
+
   async request(
     method: string,
     path: string,
     body?: unknown
   ): Promise<unknown> {
+    const remembered = this.cachedAuthRefusal(method, path);
+    if (remembered) throw remembered;
+
     const response = await this.send(method, path, {
       ...(body !== undefined ? { body } : {}),
       accept: 'application/json',
     });
-    const text = await NtfyApi.readCapped(response);
 
+    // The status decides before a byte of the body is read. Reading first means
+    // the success ceiling can turn a 401 into a size complaint.
     if (!response.ok) {
-      throw new NtfyApiError(response.status, text, method, path);
+      throw await this.failure(response, method, path);
     }
+
+    const text = await NtfyApi.readCapped(response);
 
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('application/json')) {
@@ -380,28 +546,36 @@ export class NtfyApi {
   ): Promise<NtfyMessage[]> {
     const search = new URLSearchParams({ poll: '1', ...query });
     const path = `/${topics.join(',')}/json?${search.toString()}`;
+
+    const remembered = this.cachedAuthRefusal('GET', path);
+    if (remembered) throw remembered;
+
     const response = await this.send('GET', path, {
       accept: 'application/x-ndjson',
     });
-    const text = await NtfyApi.readCapped(response);
     if (!response.ok) {
-      throw new NtfyApiError(response.status, text, 'GET', path);
+      throw await this.failure(response, 'GET', path);
     }
+    const text = await NtfyApi.readCapped(response);
 
     const messages: NtfyMessage[] = [];
     for (const line of text.split('\n')) {
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
-      let parsed: NtfyMessage;
+      let parsed: unknown;
       try {
-        parsed = JSON.parse(trimmed) as NtfyMessage;
+        parsed = JSON.parse(trimmed);
       } catch {
         // A truncated final line is the expected shape of a cut-off stream.
         continue;
       }
+      // `null`, `42` and `[1,2]` are all valid JSON and all valid lines of an
+      // NDJSON stream. Reading `.event` off one of them throws out of the poll,
+      // which is the whole listing rather than the line.
+      if (!isRecord(parsed)) continue;
       // Stream bookkeeping, not content.
       if (parsed.event === 'open' || parsed.event === 'keepalive') continue;
-      messages.push(parsed);
+      messages.push(parsed as unknown as NtfyMessage);
     }
     return messages;
   }

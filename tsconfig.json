@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    // ES2024 for `String#toWellFormed`, which `clean.ts` runs after every cut.
+    // The `target` is raised rather than a `lib` added: setting `lib` at all
+    // drops the default DOM library, and `Response`, `RequestInit` and `fetch`
+    // — which `api.ts` and every fetch stub in the tests are typed against —
+    // live there. Both supported Node lines (22, 24) implement all of ES2024.
+    "target": "ES2024",
     "module": "Node16",
     "moduleResolution": "Node16",
     "outDir": "dist",
