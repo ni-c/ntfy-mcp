@@ -330,6 +330,69 @@ describe('the fallback path for a client with no dialog', () => {
     });
   });
 
+  it('refuses a token issued for different content', async () => {
+    // The binding this review added, against the real instance rather than a
+    // fake: `update_message` carries the whole content schema — `actions`
+    // included, and an "http" button fires from the recipient's device — so a
+    // confirmation obtained for one text must not execute another.
+    const target = idOf(
+      parse<Published>(
+        await plain.call('publish_message', {
+          topic: sandbox.topic,
+          message: 'Before.',
+        })
+      )
+    );
+
+    const refusal = await plain.call(
+      'update_message',
+      {
+        sequence_id: target,
+        topic: sandbox.topic,
+        message: 'A corrected typo.',
+      },
+      { expectError: /confirm_token=/ }
+    );
+    const token = /confirm_token="([a-f0-9]{32})"/.exec(refusal)?.[1];
+    expect(token).toBeDefined();
+
+    await plain.call(
+      'update_message',
+      {
+        sequence_id: target,
+        topic: sandbox.topic,
+        message: 'A corrected typo.',
+        actions: [
+          {
+            action: 'http',
+            label: 'Approve',
+            url: 'https://example.invalid/press',
+          },
+        ],
+        confirm_token: token,
+      },
+      { expectError: 'issued for different arguments' }
+    );
+
+    // Nothing was written: the instance's cache holds no revision carrying the
+    // button. Asserted against the listing rather than against the refusal,
+    // because what matters is the write that did not happen.
+    const listed = await plain.call('list_messages', {
+      topics: [sandbox.topic],
+    });
+    expect(listed).not.toContain('example.invalid/press');
+
+    // And the same content under its own token still works.
+    const done = parse<{ updated: string }>(
+      await plain.confirmed('update_message', {
+        sequence_id: target,
+        topic: sandbox.topic,
+        message: 'A corrected typo.',
+      })
+    );
+    expect(done.updated).toBe(target);
+  });
+
   it('asked a person on the other harness, and nobody on this one', () => {
     expect(asking.prompts.length).toBeGreaterThan(0);
     expect(plain.prompts).toHaveLength(0);

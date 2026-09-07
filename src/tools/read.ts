@@ -13,6 +13,8 @@ import {
 } from '../schema.js';
 
 import { NtfyApiError, type NtfyApi } from '../api.js';
+import { arrayOf, isRecord, stringOf } from '../boundary.js';
+import { cleanCut, cleanDeep, errorText } from '../clean.js';
 import { READ_ONLY } from './annotations.js';
 import {
   buildEnvelope,
@@ -21,13 +23,79 @@ import {
   messageView,
   toView,
 } from '../messages.js';
-import { errorResult, jsonResult, run, untrustedResult } from '../result.js';
+import {
+  errorResult,
+  jsonResult,
+  renderJson,
+  run,
+  untrustedBytes,
+  untrustedResult,
+} from '../result.js';
 
 const MAX_TOPICS = 10;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_USER_LIMIT = 100;
 const MAX_USER_LIMIT = 500;
+
+/**
+ * Wall clock for one `check_topic_access` call.
+ *
+ * The per-request timeout is not a per-call budget: ten topics at fifteen
+ * seconds each is a call that can run for two and a half minutes, on a tool
+ * annotated cheap. What is not reached inside the budget is reported as
+ * unchecked rather than left out — an absent entry reads as an answer.
+ */
+const ACCESS_CHECK_BUDGET_MS = 30_000;
+
+/**
+ * Ceilings on the parts of an answer the instance sizes rather than this server.
+ *
+ * A section of `get_server_info` is whatever `/v1/config` returns; an account
+ * record carries `limits`, `stats` and every access token's metadata; a username
+ * on an instance with signup enabled is chosen by whoever signed up. None of
+ * them has a length in ntfy's API, and all of them used to be passed on whole —
+ * so one call could answer with several megabytes, which costs the caller its
+ * context window rather than merely being untidy.
+ */
+const MAX_SECTION_BYTES = 40_000;
+const MAX_ACCOUNT_BYTES = 60_000;
+const MAX_NAME_CHARS = 200;
+
+/** What replaces a section too large to report. */
+function tooLarge(what: string, bytes: number): { unavailable: string } {
+  return {
+    unavailable:
+      `${what} is ${bytes} bytes, past the ${MAX_SECTION_BYTES}-byte ceiling ` +
+      'this server puts on one section of an answer',
+  };
+}
+
+/**
+ * Cleans a pass-through document and refuses it if it is too big to report.
+ *
+ * The order matters: cleaning first would spend the walk on a document that is
+ * then discarded, so the size is decided on what arrived.
+ */
+function boundedSection(
+  value: unknown,
+  what: string
+): unknown | { unavailable: string } {
+  // A section is a *document*: the schema's union is a loose object or a note
+  // saying why there is none, and a number, a string or `null` is neither. Left
+  // alone it fails the whole call's output validation — one endpoint answering
+  // `42` costing every other section of the answer, which is exactly the shape
+  // this tool's "one unavailable section does not fail the call" design exists
+  // to prevent.
+  if (isRecord(value)) {
+    const bytes = Buffer.byteLength(renderJson(value), 'utf8');
+    if (bytes > MAX_SECTION_BYTES) return tooLarge(what, bytes);
+    return cleanDeep(value);
+  }
+  return {
+    unavailable: `${what} was not a JSON object — this is not an ntfy API response`,
+  };
+}
 
 /**
  * A section of `get_server_info`, or the note saying why it is absent.
@@ -64,8 +132,10 @@ async function section<T>(
     if (error instanceof NtfyApiError) {
       return { unavailable: onError(error) };
     }
-    const message = error instanceof Error ? error.message : String(error);
-    return { unavailable: message };
+    // Not this server's own words: undici quotes a header value it refuses,
+    // Node's TLS layer quotes the certificate's names. Cleaned and cut like any
+    // other text that arrived from outside.
+    return { unavailable: errorText(error, 500) };
   }
 }
 
@@ -178,12 +248,16 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         if (args.scheduled === true) query.scheduled = '1';
 
         const messages = await api.poll(topics, query);
+        // The budget is handed the renderer, not a serialisation of the value:
+        // what goes out carries the marker sentence, the two marker fields and
+        // two-space indentation, and none of those used to be measured.
         const envelope = buildEnvelope(
           topics,
           messages,
-          args.limit ?? DEFAULT_LIMIT
+          args.limit ?? DEFAULT_LIMIT,
+          untrustedBytes
         );
-        return untrustedResult(envelope);
+        return untrustedResult(envelope, 'list_messages');
       })
   );
 
@@ -222,16 +296,24 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
               'hours by default) — or it was published to another topic.'
           );
         }
-        // The same total budget list_messages honours. Without it this tool
-        // is the way around the envelope cap: one notification, returned in
-        // full, with the fields a publisher chose.
+        // The same total budget list_messages honours, measured on the same
+        // string it will be emitted as. Without it this tool is the way around
+        // the envelope cap: one notification, returned in full, with the fields
+        // a publisher chose.
         let view = toView(found, { preview: false });
-        if (
-          Buffer.byteLength(JSON.stringify(view), 'utf8') > MAX_RESULT_BYTES
-        ) {
+        if (view !== undefined && untrustedBytes(view) > MAX_RESULT_BYTES) {
           view = toView(found, { preview: true });
         }
-        return untrustedResult(view);
+        if (view === undefined) {
+          // Only reachable if the id that matched is not a string, which the
+          // comparison above already rules out — kept because the projection is
+          // allowed to refuse and a silent `undefined` would be a crash later.
+          return errorResult(
+            `The entry ntfy returned for ${args.id} could not be read as a ` +
+              'message.'
+          );
+        }
+        return untrustedResult(view, 'get_message');
       })
   );
 
@@ -268,6 +350,8 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
               .optional()
               .describe('HTTP status ntfy answered with, on a refusal.'),
             note: z.string().optional(),
+            /** Set when the call ran out of time before reaching this topic. */
+            not_checked: z.literal(true).optional(),
           })
         ),
       }),
@@ -276,10 +360,27 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
       run(async () => {
         const topics = resolveTopics(api, args.topics);
         const results = [];
+        // A wall clock for the call, not only a timeout per request. Ten topics
+        // at the fifteen-second request timeout is two and a half minutes on a
+        // tool the annotations call cheap, and the deadline is checked before
+        // each request rather than after.
+        const deadline = Date.now() + ACCESS_CHECK_BUDGET_MS;
         // Sequential on purpose: repeated authentication failures trip ntfy's
         // own auth rate limit (42909), and a parallel fan-out is the fastest
         // way to get there.
         for (const topic of topics) {
+          if (Date.now() >= deadline) {
+            results.push({
+              topic,
+              read_access: false,
+              not_checked: true as const,
+              note:
+                'Not checked: this call reached its ' +
+                `${ACCESS_CHECK_BUDGET_MS / 1000}-second budget. Ask for ` +
+                'fewer topics.',
+            });
+            continue;
+          }
           try {
             await api.get(`/${topic}/auth`);
             results.push({ topic, read_access: true });
@@ -300,7 +401,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
             throw error;
           }
         }
-        return jsonResult({ results });
+        return jsonResult({ results }, 'check_topic_access');
       })
   );
 
@@ -361,13 +462,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           ),
         ]);
 
-        const role =
-          typeof account === 'object' &&
-          account !== null &&
-          'role' in account &&
-          typeof account.role === 'string'
-            ? (account as { role: string }).role
-            : undefined;
+        const role = isRecord(account) ? stringOf(account.role) : undefined;
 
         // jsonResult, not untrustedResult, unlike the other read tools: these
         // four sections are the instance's own configuration and counters,
@@ -375,19 +470,29 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         // third party who happened to learn a topic name. Half the object is
         // also derived here rather than fetched, and marking that as upstream
         // content would be a lie in the other direction.
-        return jsonResult({
-          health,
-          config,
-          stats,
-          version,
-          // Answers "should I even try the user and access tools?" from one
-          // cheap call, instead of after a confusing 401.
-          admin_tools_available:
-            role === undefined ? 'unknown' : role === 'admin',
-          authenticated_as: role === undefined ? 'unknown' : role,
-          topics_restricted_to:
-            api.allowedTopics.length > 0 ? api.allowedTopics : null,
-        });
+        return jsonResult(
+          {
+            // Each section is the instance's document, bounded and cleaned on
+            // its own so one oversized `/v1/config` costs that section rather
+            // than the call. `role` above is read before this, off the raw
+            // record, because it is this server's own derived answer.
+            health: boundedSection(health, 'the health section'),
+            config: boundedSection(config, 'the config section'),
+            stats: boundedSection(stats, 'the stats section'),
+            version: boundedSection(version, 'the version section'),
+            // Answers "should I even try the user and access tools?" from one
+            // cheap call, instead of after a confusing 401.
+            admin_tools_available:
+              role === undefined ? 'unknown' : role === 'admin',
+            // The instance's word for what this account is, so cleaned and cut
+            // like any other string it chose.
+            authenticated_as:
+              role === undefined ? 'unknown' : cleanCut(role, MAX_NAME_CHARS),
+            topics_restricted_to:
+              api.allowedTopics.length > 0 ? api.allowedTopics : null,
+          },
+          'get_server_info'
+        );
       })
   );
 
@@ -427,7 +532,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
       run(async () =>
         // Token labels and the tier name are free text somebody typed, so the
         // result is framed as data rather than as this server speaking.
-        untrustedResult(redactAccount(await api.account()))
+        untrustedResult(redactAccount(await api.account()), 'get_account')
       )
   );
 
@@ -478,7 +583,7 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
           args.topic === undefined ? undefined : api.resolveTopic(args.topic);
 
         const users = await api.get('/v1/users');
-        let filtered = (Array.isArray(users) ? users : []).map((entry) =>
+        let filtered = arrayOf(users).map((entry) =>
           toUserView(entry, api.allowedTopics)
         );
         if (args.username !== undefined) {
@@ -491,21 +596,36 @@ export function registerReadTools(server: McpServer, api: NtfyApi): void {
         }
 
         const total = filtered.length;
-        const shown = filtered.slice(0, args.limit ?? DEFAULT_USER_LIMIT);
-        const payload: Record<string, unknown> = {
+        let shown = filtered.slice(0, args.limit ?? DEFAULT_USER_LIMIT);
+        const build = (): Record<string, unknown> => ({
           count: shown.length,
           total,
           users: shown,
-        };
+        });
+        // `limit` bounds the number of accounts and nothing bounds an account:
+        // a username is chosen by whoever signed up, and a grant list by
+        // whoever administers the instance. Drop whole accounts from the end —
+        // an account reported in half is worse than one reported as missing —
+        // and say how many are gone.
+        let droppedForSize = 0;
+        while (shown.length > 0 && untrustedBytes(build()) > MAX_RESULT_BYTES) {
+          shown = shown.slice(0, -1);
+          droppedForSize += 1;
+        }
+        const payload = build();
         if (shown.length < total) {
           payload.note =
-            `${total - shown.length} more account(s) exist. Narrow the ` +
-            'request with "username" or "topic", or raise "limit".';
+            `${total - shown.length} more account(s) exist` +
+            (droppedForSize > 0
+              ? `, ${droppedForSize} of them left out to stay inside the ` +
+                'result budget'
+              : '') +
+            '. Narrow the request with "username" or "topic", or raise "limit".';
         }
         // Usernames and grant patterns are instance content, not server
         // metadata: on an instance with signup enabled, anyone on the internet
         // chooses their own username.
-        return untrustedResult(payload);
+        return untrustedResult(payload, 'list_users');
       })
   );
 }
@@ -527,14 +647,17 @@ interface UserView {
  * would ship it into the transcript with no change here.
  */
 function toUserView(entry: unknown, allowed: readonly string[]): UserView {
-  const source = (entry ?? {}) as Record<string, unknown>;
-  const grants = Array.isArray(source.grants) ? source.grants : [];
+  const source = isRecord(entry) ? entry : {};
+  const grants = arrayOf(source.grants);
   const view: UserView = {
     username: text(source.username, '(unknown)'),
     role: text(source.role, '(unknown)'),
     grants: projectGrants(
-      grants.map((grant) => {
-        const g = (grant ?? {}) as Record<string, unknown>;
+      // `MAX_GRANTS` before the projection, not after: `projectGrants` walks
+      // the allowed topics once per grant, so an account the instance reports
+      // with a hundred thousand grants is a product, not a list.
+      grants.slice(0, MAX_GRANTS).map((grant) => {
+        const g = isRecord(grant) ? grant : {};
         return {
           topic: text(g.topic, ''),
           permission: text(g.permission, ''),
@@ -543,9 +666,13 @@ function toUserView(entry: unknown, allowed: readonly string[]): UserView {
       allowed
     ),
   };
-  if (typeof source.tier === 'string') view.tier = source.tier;
+  const tier = stringOf(source.tier);
+  if (tier !== undefined) view.tier = cleanCut(tier, MAX_NAME_CHARS);
   return view;
 }
+
+/** Ceiling on the grants of one account, which ntfy does not bound. */
+const MAX_GRANTS = 500;
 
 /**
  * Restates an account's grants in terms of `NTFY_TOPICS`.
@@ -587,7 +714,7 @@ function projectGrants(
  * that only checks for presence.
  */
 function text(value: unknown, fallback: string): string {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return cleanCut(value, MAX_NAME_CHARS);
   if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
@@ -643,24 +770,41 @@ export function redactAccount(account: unknown): Record<string, unknown> {
   // not understand, and a non-object account body has none of these fields to
   // begin with — returning it verbatim would forward exactly the shape the
   // allowlist exists to stop, and would not fit the declared output schema.
-  if (typeof account !== 'object' || account === null) return {};
-  const source = account as Record<string, unknown>;
+  if (!isRecord(account)) return {};
+  const source = account;
   const result: Record<string, unknown> = {};
 
   for (const field of ACCOUNT_FIELDS) {
-    if (field in source) result[field] = source[field];
+    // `Object.hasOwn`, not `in`: the record comes from `JSON.parse`, so what
+    // the prototype chain carries is not this account's.
+    if (Object.hasOwn(source, field)) {
+      const value = source[field];
+      // Bounded per field rather than only in total: `limits` and `stats` pass
+      // through whole, and "whole" is the instance's choice of size.
+      result[field] =
+        Buffer.byteLength(renderJson({ value }), 'utf8') > MAX_ACCOUNT_BYTES
+          ? tooLarge(
+              `the ${field} field`,
+              Buffer.byteLength(renderJson({ value }), 'utf8')
+            )
+          : cleanDeep(value);
+    }
   }
 
   if (Array.isArray(source.tokens)) {
-    result.tokens = source.tokens.map((entry) => {
-      if (typeof entry !== 'object' || entry === null) return '(redacted)';
-      const token = entry as Record<string, unknown>;
+    result.tokens = source.tokens.slice(0, MAX_TOKENS).map((entry) => {
+      if (!isRecord(entry)) return '(redacted)';
       const view: Record<string, unknown> = { token: '(redacted)' };
       for (const field of TOKEN_FIELDS) {
-        if (field in token) view[field] = token[field];
+        if (Object.hasOwn(entry, field)) {
+          view[field] = cleanDeep(entry[field]);
+        }
       }
       return view;
     });
   }
   return result;
 }
+
+/** Ceiling on the access tokens of one account, which ntfy does not bound. */
+const MAX_TOKENS = 200;

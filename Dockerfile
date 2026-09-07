@@ -34,9 +34,14 @@ COPY --from=build /app/dist ./dist
 # not read and stays out of the shipped layer.
 COPY package.json ./
 
-# The npm bundled with the base image is its main CVE source and a stdio
-# server never needs it at runtime.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# The package managers the base image ships are its main CVE source and a stdio
+# server needs none of them at runtime. npm was removed here before; yarn and
+# corepack were not, which is easy to miss because nothing references them —
+# `which yarn npm npx corepack` after a build is the check, not the Dockerfile.
+RUN rm -rf \
+      /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+      /usr/local/lib/node_modules/corepack /usr/local/bin/corepack \
+      /opt/yarn-v* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Ownership proof for the MCP Registry: must match server.json's name exactly.
 LABEL io.modelcontextprotocol.server.name="io.github.ni-c/ntfy-mcp"

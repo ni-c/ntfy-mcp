@@ -124,9 +124,20 @@ export function registerAdminWriteTools(
               'It becomes an account on this instance. Nothing is reachable ' +
               'through it until manage_user_access grants a topic — but ' +
               'whoever has the password can then authenticate as it.',
-            resourceKey: setResourceKey('create_user', [args.username]),
+            // The tier is in the key although it is not in the sentence: the
+            // call writes it, and a token issued for an account on the free
+            // tier must not execute one on a tier with different quotas. The
+            // password is in neither, deliberately — it is a live credential,
+            // and both the key's binding and the sentence are read back.
+            resourceKey: orderedResourceKey('create_user', [
+              args.username,
+              args.tier ?? '',
+            ]),
             token: args.confirm_token,
             toolName: 'create_user',
+            ...(args.tier === undefined
+              ? {}
+              : { details: [{ label: 'tier', value: args.tier }] }),
             title: `Create the account "${args.username}"?`,
             hint: 'Tick to create it, leave it to cancel.',
           }

@@ -70,9 +70,19 @@ manage_user_access grants a topic — but whoever has the password can then
 authenticate as it.
 ```
 
-The approval is bound to its target, so one obtained for a call cannot be
-replayed against another. For a *set* of targets the binding is a fingerprint of
-the exact list: an approval for `["a"]` does not execute `["a", "b"]`.
+The approval is bound to its target, so one obtained for a call cannot be used
+for another. For a *set* of targets the binding is a fingerprint of the exact
+list: an approval for `["a"]` does not execute `["a", "b"]`. Where the parts are
+*positions* rather than members of a set the binding is ordered, because the
+vocabularies overlap — a username is a legal topic name, so a confirmation for
+"grant alice read_only on topic deploy" must not also execute the pair the other
+way round.
+
+`update_message` binds the content as well as the notification, because the call
+carries the whole content schema: an `http` action button fires from the
+recipient's device, and a confirmation obtained for a corrected typo must not be
+redeemable for a call that adds one. The dialog names the fields that will be
+replaced, on their own labelled lines, without quoting the caller's text.
 
 ## Clients that cannot show a dialog
 
@@ -148,25 +158,31 @@ claims — the annotation says what a call _does_, the dialog decides whether it
 _happens_ — so the two lists are related but not the same. `create_user` is the
 standing example in the other direction: it destroys nothing, and it is guarded.
 
-## An approval proves binding, not freshness
+## An approval is single-use, per process
 
 The state that carries a dialog's answer back is sealed, and the seal proves the
-question was this server's and named this target. It does not prove the answer is
-being used for the first time: it carries no nonce, and verifying it spends
-nothing, so the same answer can be submitted again until it expires. Whoever can
-do that received the question in the first place and is the client — this is not a
-route around the person — but it does mean **at-most-once is not guaranteed on the
-dialog path**. The two-call token is the opposite: it is a secret the server keeps
-and deletes on use.
+question was this server's and named this target. Since `mcp-approval` 0.8.1 it
+also proves the answer is being used for the first time: the state carries a
+nonce, and verifying it spends that nonce — whether the answer was accept or
+decline. Presenting the same answer again is refused, so **at-most-once holds on
+the dialog path**. The two-call token used where a client cannot show a dialog
+works the same way: a secret this server keeps and deletes on use.
 
-Every guarded tool here is idempotent in effect, so a repeated leg lands on the
-same instance: `create_user` and `delete_user` fail the second time, the access
-rule is written or removed once, a second delete re-announces a deletion
-subscribers were already told about, and a replayed `update_message` re-applies
-the revision it applied before. `publish_message` is the one operation that
-genuinely acts twice, and it is unguarded — so there is no approval state to
-replay, and ntfy offers no idempotency key that would make it safe to retry
-blindly. See the [security policy](https://github.com/ni-c/ntfy-mcp/blob/main/SECURITY.md).
+The limit worth knowing is where the record lives. It is held **in this
+process**, so a restart forgets what was spent, and two processes serving the two
+halves of one flow would not share it. A stdio server is spawned per session, so
+in the ordinary case the process is the flow and there is nothing left over.
+
+Every guarded tool here is also idempotent in effect, which is what makes the
+residual risk small rather than merely bounded: `create_user` and `delete_user`
+fail the second time, the access rule is written or removed once, a second delete
+re-announces a deletion subscribers were already told about, and `update_message`
+re-applies the revision it applied before — the content is part of its
+confirmation key, so a second run carries the same text by construction.
+`publish_message` is the one operation that genuinely acts twice, and it is
+unguarded — so there is no approval state to replay, and ntfy offers no
+idempotency key that would make it safe to retry blindly. See the
+[security policy](https://github.com/ni-c/ntfy-mcp/blob/main/SECURITY.md).
 
 ## Behind a gateway
 

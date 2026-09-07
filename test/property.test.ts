@@ -2,9 +2,11 @@ import fc from 'fast-check';
 import { orderedResourceKey, setResourceKey } from 'mcp-approval';
 import { describe, expect, it } from 'vitest';
 
+import { cleanText } from '../src/clean.js';
 import {
   MAX_ITEM_BYTES,
   MAX_TAGS,
+  messageView,
   PREVIEW_CHARS,
   toView,
 } from '../src/messages.js';
@@ -32,6 +34,16 @@ const RUNS = { numRuns: 500 };
 type NtfyMessage = Parameters<typeof toView>[0];
 
 const part = fc.stringMatching(/^[a-z0-9]{1,12}$/);
+
+/** `toView` accepts every message the generators below build: each has a string id. */
+const project = (
+  raw: NtfyMessage,
+  options: { preview: boolean }
+): NonNullable<ReturnType<typeof toView>> => {
+  const result = toView(raw, options);
+  if (result === undefined) throw new Error('toView refused a shaped message');
+  return result;
+};
 
 describe('a confirmation key depends on the order of its targets', () => {
   /**
@@ -142,7 +154,7 @@ describe('a message view stays inside its budgets', () => {
         fc.array(fc.string({ maxLength: 200 }), { maxLength: 80 }),
         fc.array(fc.jsonValue(), { maxLength: 12 }),
         (text, tags, actions) => {
-          const view = toView(
+          const view = project(
             message({ message: text, tags, actions } as Partial<NtfyMessage>),
             { preview: false }
           );
@@ -165,12 +177,16 @@ describe('a message view stays inside its budgets', () => {
   it('a preview is cut at the documented length and says that it was', () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 3000 }), (text) => {
-        const view = toView(message({ message: text }), { preview: true });
+        const view = project(message({ message: text }), { preview: true });
+        // Against the *cleaned* text, which is what the projection works on:
+        // the removal of control characters happens before the cut, so a body
+        // that is long only because of them is not a body that gets previewed.
+        const cleaned = cleanText(text);
         if (text.length > PREVIEW_CHARS) {
           expect(view.message_truncated).toBe(true);
           expect(view.message).toHaveLength(PREVIEW_CHARS + 1);
         } else {
-          expect(view.message).toBe(text);
+          expect(view.message).toBe(cleaned);
           expect(view.message_truncated).toBeUndefined();
         }
       }),
@@ -183,7 +199,7 @@ describe('a message view stays inside its budgets', () => {
       fc.property(
         fc.array(fc.string({ maxLength: 40 }), { maxLength: 100 }),
         (tags) => {
-          const view = toView(message({ tags }), { preview: false });
+          const view = project(message({ tags }), { preview: false });
           expect(view.tags?.length ?? 0).toBeLessThanOrEqual(MAX_TAGS);
           if (tags.length > MAX_TAGS) expect(view.tags_truncated).toBe(true);
         }
@@ -192,25 +208,96 @@ describe('a message view stays inside its budgets', () => {
     );
   });
 
-  it('never throws on a message the publisher shaped freely', () => {
+  /**
+   * The generator is the test.
+   *
+   * This property used to draw its fields from `fc.string()`, `fc.integer()`
+   * and `fc.array(fc.string())` — the types `NtfyMessage` declares — and was
+   * green while `toView` threw a `RangeError` on `time: "later"` and a
+   * `TypeError` on `tags: 7`. A generator that respects the declared types
+   * cannot find a value of the wrong type, and its title claimed the opposite.
+   *
+   * So the leaves are arbitrary JSON now, plus the values `JSON.parse` can
+   * produce that `fc.jsonValue()` does not reach: `Infinity` from `1e999`, a
+   * number past the safe range, and a timestamp outside what `Date` holds.
+   */
+  const leaf = fc.oneof(
+    fc.jsonValue(),
+    fc.constantFrom(
+      Infinity,
+      -Infinity,
+      Number.NaN,
+      1e300,
+      -(2 ** 53),
+      8.64e12 + 1,
+      -8.64e12 - 1,
+      Number.MAX_SAFE_INTEGER
+    ),
+    fc.double(),
+    fc.string({ maxLength: 200 })
+  );
+
+  it('never throws, whatever shape the instance sent', () => {
     fc.assert(
       fc.property(
         fc.record(
           {
-            title: fc.string(),
-            message: fc.string(),
-            click: fc.string(),
-            icon: fc.string(),
-            content_type: fc.string(),
-            priority: fc.integer(),
-            tags: fc.array(fc.string(), { maxLength: 40 }),
+            id: leaf,
+            sequence_id: leaf,
+            event: leaf,
+            topic: leaf,
+            time: leaf,
+            title: leaf,
+            message: leaf,
+            click: leaf,
+            icon: leaf,
+            content_type: leaf,
+            priority: leaf,
+            tags: leaf,
+            actions: leaf,
+            attachment: leaf,
           },
           { requiredKeys: [] }
         ),
         (over) => {
           expect(() =>
-            toView(message(over as Partial<NtfyMessage>), { preview: true })
+            toView(over as unknown as NtfyMessage, { preview: true })
           ).not.toThrow();
+        }
+      ),
+      RUNS
+    );
+  });
+
+  it('answers something the output schema accepts, or nothing at all', () => {
+    fc.assert(
+      fc.property(
+        fc.record(
+          {
+            id: leaf,
+            event: leaf,
+            topic: leaf,
+            time: leaf,
+            title: leaf,
+            message: leaf,
+            priority: leaf,
+            tags: leaf,
+            actions: leaf,
+            attachment: leaf,
+            content_type: leaf,
+          },
+          { requiredKeys: [] }
+        ),
+        (over) => {
+          const view = toView(over as unknown as NtfyMessage, {
+            preview: true,
+          });
+          // A refusal is a legitimate answer — an entry with no usable id has
+          // no honest projection. What must never happen is a view the SDK
+          // then refuses, which fails the whole tool call rather than the
+          // entry.
+          if (view === undefined) return;
+          expect(messageView.safeParse(view).success).toBe(true);
         }
       ),
       RUNS

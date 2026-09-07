@@ -113,6 +113,13 @@ export async function connect(
     server.connect(serverTransport),
     client.connect(clientTransport),
   ]);
+  // Once per connection, so every `callTool` in every suite runs the SDK's
+  // *client-side* schema check on the success path. Without the listing the
+  // client has no schema to check against, and a closed `outputSchema` that
+  // refuses a field the handler really returns stays green through every test
+  // — while every validating client in the world gets a protocol error on that
+  // tool's every successful call.
+  await client.listTools();
   return {
     client,
     calls,
