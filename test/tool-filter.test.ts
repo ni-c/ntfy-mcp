@@ -31,17 +31,17 @@ describe('the catalogue', () => {
   // These are what let the filter validate a name before anything is
   // registered. If they drift from the code, every error message drifts too.
   it('is exactly the set of tools the server registers', async () => {
-    expect(await toolNames()).toEqual([...ALL_TOOLS].sort());
+    expect(await toolNames()).toEqual(ALL_TOOLS.toSorted());
   });
 
   it('splits into read and write with nothing left over', async () => {
-    expect([...READ_TOOLS, ...WRITE_TOOLS].sort()).toEqual(
-      [...ALL_TOOLS].sort()
+    expect([...READ_TOOLS, ...WRITE_TOOLS].toSorted()).toEqual(
+      ALL_TOOLS.toSorted()
     );
     expect(
       READ_TOOLS.filter((t) => (WRITE_TOOLS as readonly string[]).includes(t))
     ).toEqual([]);
-    expect(await toolNames({ readOnly: true })).toEqual([...READ_TOOLS].sort());
+    expect(await toolNames({ readOnly: true })).toEqual(READ_TOOLS.toSorted());
   });
 
   it('holds names the env-var syntax cannot misread', () => {
@@ -96,18 +96,18 @@ describe('selecting tools', () => {
 
   it('selects the curated set for "essential"', async () => {
     expect(await toolNames({ allowTools: 'essential' })).toEqual(
-      [...ESSENTIAL_TOOLS].sort()
+      ESSENTIAL_TOOLS.toSorted()
     );
   });
 
   it('lets the preset compose with extra names', async () => {
     expect(
       await toolNames({ allowTools: 'essential,delete_messages' })
-    ).toEqual([...ESSENTIAL_TOOLS, 'delete_messages'].sort());
+    ).toEqual([...ESSENTIAL_TOOLS, 'delete_messages'].toSorted());
   });
 
   it('leaves an unconfigured server untouched', async () => {
-    expect(await toolNames()).toEqual([...ALL_TOOLS].sort());
+    expect(await toolNames()).toEqual(ALL_TOOLS.toSorted());
   });
 
   it('supports the deny list the README recommends', async () => {
@@ -201,7 +201,7 @@ describe('together with read-only mode', () => {
     expect(await toolNames({ ...readOnly, allowTools: 'essential' })).toEqual(
       ESSENTIAL_TOOLS.filter((t) =>
         (READ_TOOLS as readonly string[]).includes(t)
-      ).sort()
+      ).toSorted()
     );
   });
 
@@ -217,7 +217,7 @@ describe('together with read-only mode', () => {
     // Denying something already suppressed is how a defensive list is written.
     expect(
       await toolNames({ ...readOnly, denyTools: 'delete_messages' })
-    ).toEqual([...READ_TOOLS].sort());
+    ).toEqual(READ_TOOLS.toSorted());
   });
 });
 
@@ -241,7 +241,7 @@ describe('the tools themselves', () => {
     const destructive = tools
       .filter((tool) => tool.annotations?.destructiveHint === true)
       .map((tool) => tool.name)
-      .sort();
+      .toSorted();
     expect(destructive).toEqual([
       'delete_messages',
       'delete_user',
@@ -319,7 +319,7 @@ describe('the tools themselves', () => {
         return properties?.untrusted !== undefined;
       })
       .map((tool) => tool.name)
-      .sort();
+      .toSorted();
     // get_server_info is deliberately absent: its four sections are the
     // instance's own configuration and counters, set by whoever runs the server
     // this client was pointed at — not by a third party who happened to learn a

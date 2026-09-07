@@ -47,10 +47,10 @@ export const ACCESS_ACTION_NAMES = [
 type Mapped = keyof typeof ACCESS_ACTIONS;
 type Advertised = Exclude<(typeof ACCESS_ACTION_NAMES)[number], 'revoke'>;
 // Fails to compile if either list gains an entry the other does not have.
-const _actionsAgree: [Mapped, Advertised] extends [Advertised, Mapped]
+const actionsAgree: [Mapped, Advertised] extends [Advertised, Mapped]
   ? true
   : never = true;
-void _actionsAgree;
+void actionsAgree;
 
 export function registerAdminWriteTools(
   server: McpServer,

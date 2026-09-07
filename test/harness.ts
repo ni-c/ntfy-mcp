@@ -132,7 +132,7 @@ export async function toolNames(
 ): Promise<string[]> {
   const { client } = await connect(overrides);
   const { tools } = await client.listTools();
-  return tools.map((tool) => tool.name).sort();
+  return tools.map((tool) => tool.name).toSorted();
 }
 
 /** The confirmation token a guarded tool handed back on its first call. */
