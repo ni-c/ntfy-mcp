@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#4f46e5"/>
+  <!-- bell: one notification, with the clapper picked out like the caret in the family's other marks -->
+  <path d="M16 7a1.4 1.4 0 0 1 1.4 1.4v.5a5.6 5.6 0 0 1 4.2 5.4v3.3l1.7 2.6a.8.8 0 0 1-.7 1.3H9.4a.8.8 0 0 1-.7-1.3l1.7-2.6v-3.3a5.6 5.6 0 0 1 4.2-5.4v-.5A1.4 1.4 0 0 1 16 7z" fill="#ffffff"/>
+  <path d="M13.3 22.8h5.4a2.7 2.7 0 0 1-5.4 0z" fill="#a5b4fc"/>
+</svg>
