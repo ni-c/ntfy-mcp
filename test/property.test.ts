@@ -45,6 +45,16 @@ const project = (
   return result;
 };
 
+/** A minimal message as ntfy delivers it, with whatever the publisher chose on top. */
+const message = (over: Partial<NtfyMessage> = {}): NtfyMessage =>
+  ({
+    id: 'abc123',
+    event: 'message',
+    topic: 'deploy',
+    time: 1_700_000_000,
+    ...over,
+  }) as NtfyMessage;
+
 describe('a confirmation key depends on the order of its targets', () => {
   /**
    * The property the docstring argues for. Two different tuples of the same
@@ -138,15 +148,6 @@ describe('a confirmation key depends on the order of its targets', () => {
 });
 
 describe('a message view stays inside its budgets', () => {
-  const message = (over: Partial<NtfyMessage> = {}): NtfyMessage =>
-    ({
-      id: 'abc123',
-      event: 'message',
-      topic: 'deploy',
-      time: 1_700_000_000,
-      ...over,
-    }) as NtfyMessage;
-
   it('never exceeds the per-item byte budget, whatever the publisher sent', () => {
     fc.assert(
       fc.property(
