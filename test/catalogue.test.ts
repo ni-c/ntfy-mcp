@@ -107,3 +107,26 @@ describe('the text block and structuredContent carry the same document', () => {
     });
   }
 });
+
+describe('a __proto__ key from ntfy', () => {
+  it('is dropped, so both channels still carry the same document', async () => {
+    const harness = await connect({ topics: ['alerts'] }, (request) =>
+      request.url.includes('/v1/config')
+        ? new Response(
+            '{"__proto__": false, "base_url": "https://ntfy.example", "nested": {"__proto__": 1, "list": [{"__proto__": 2, "k": 3}]}}',
+            { headers: { 'content-type': 'application/json' } }
+          )
+        : {}
+    );
+    const result = await harness.call('get_server_info');
+    expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+    const text = harness.text(result);
+    expect(text).not.toContain('__proto__');
+    const json = text.startsWith(UNTRUSTED_PREFIX)
+      ? text.slice(UNTRUSTED_PREFIX.length).trimStart()
+      : text;
+    expect(JSON.parse(json)).toEqual(
+      JSON.parse(JSON.stringify(result.structuredContent))
+    );
+  });
+});

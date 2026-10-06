@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Fixed
+
+- A `__proto__` key in a document ntfy sends is dropped, at every depth. It used
+  to reach the text block but vanish from `structuredContent`, because the client
+  parses that against the output schema and zod sets a prototype on that name
+  instead of a field. Both channels now carry the same document.
+
 ## [0.3.0] - 2026-09-07
 
 ### Added
