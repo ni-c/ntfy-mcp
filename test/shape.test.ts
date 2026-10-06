@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { UNTRUSTED_PREFIX } from '../src/result.js';
 import { connect, type Recorded } from './harness.js';
 
 /**
@@ -176,6 +177,14 @@ describe('no shape from the instance turns a tool into an error', () => {
             // Both channels still describe the same document, whatever arrived.
             if (result.structuredContent !== undefined) {
               expect(typeof result.structuredContent).toBe('object');
+              if (result.isError !== true) {
+                const json = text.startsWith(UNTRUSTED_PREFIX)
+                  ? text.slice(UNTRUSTED_PREFIX.length).trimStart()
+                  : text;
+                expect(JSON.parse(json)).toEqual(
+                  JSON.parse(JSON.stringify(result.structuredContent))
+                );
+              }
             }
           }),
           RUNS

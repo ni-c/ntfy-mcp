@@ -81,14 +81,23 @@ describe('errorText', () => {
 });
 
 describe('cleanDeep', () => {
-  it('keeps an own __proto__ key instead of losing it to the prototype', () => {
-    // `copy[key] = value` on a fresh object sets the prototype and drops the
-    // field, with no error — so a key ntfy chose vanishes and nothing notices.
-    const parsed: unknown = JSON.parse('{"__proto__": "x", "keep": "y"}');
-    const cleaned = cleanDeep(parsed) as Record<string, unknown>;
-    expect(Object.hasOwn(cleaned, '__proto__')).toBe(true);
+  it('drops a __proto__ key at every depth and nothing else', () => {
+    const cleaned = cleanDeep(
+      JSON.parse(
+        `{"__proto__": "x", "a": [1, "b", null, {"__proto__": {"p": 1}, "q": 2}], "n": 1, "__pro\\u0000to__": false}`
+      )
+    ) as Record<string, unknown>;
+    expect(Object.hasOwn(cleaned, '__proto__')).toBe(false);
     expect(Object.getPrototypeOf(cleaned)).toBe(Object.prototype);
-    expect(cleaned.keep).toBe('y');
+    expect(Object.entries(cleaned)).toEqual([
+      ['a', [1, 'b', null, { q: 2 }]],
+      ['n', 1],
+    ]);
+    const nested = (cleaned.a as unknown[])[3] as object;
+    expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).p).toBeUndefined();
+    expect(cleanDeep({})).toEqual({});
+    expect(cleanDeep(JSON.parse('{"__proto__": null}'))).toEqual({});
   });
 
   it('cleans keys as well as values', () => {

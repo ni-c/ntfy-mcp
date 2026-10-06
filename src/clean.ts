@@ -125,11 +125,14 @@ export const TOO_MANY = '(omitted: more values than this server walks)';
 /**
  * Cleans every string inside a JSON value this server merely passes through.
  *
- * Rebuilt with `Object.fromEntries` rather than assigned key by key. A key of
- * `__proto__` arrives as an own property from `JSON.parse`, and `copy[key] =
- * value` on a fresh object sets the prototype and drops the field instead —
- * silently, so nothing notices. ntfy's configuration document is a map whose
- * keys are the instance's, and a tag key in an attachment is a publisher's.
+ * Rebuilt with `Object.fromEntries`. A key of `__proto__` — an own property
+ * after `JSON.parse`, and legal JSON from any instance or publisher — is
+ * dropped, at every depth. Kept, it reached the text block but not
+ * `structuredContent`: the client parses that against the output schema, and
+ * zod builds its result by assignment, which on that name sets a prototype
+ * instead of a field. The two channels then disagreed about the same answer.
+ * The check runs on the cleaned key, so a control character inside the name
+ * cannot smuggle it past.
  *
  * Keys are cleaned as well as values: a key is text in the result too.
  */
@@ -144,10 +147,12 @@ export function cleanDeep(value: unknown): unknown {
     if (depth >= MAX_DEPTH) return TOO_DEEP;
     if (Array.isArray(node)) return node.map((entry) => walk(entry, depth + 1));
     return Object.fromEntries(
-      Object.entries(node as Record<string, unknown>).map(([key, entry]) => [
-        cleanText(key),
-        walk(entry, depth + 1),
-      ])
+      Object.entries(node as Record<string, unknown>).flatMap(
+        ([key, entry]) => {
+          const name = cleanText(key);
+          return name === '__proto__' ? [] : [[name, walk(entry, depth + 1)]];
+        }
+      )
     );
   }
 
