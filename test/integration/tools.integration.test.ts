@@ -75,7 +75,8 @@ describe('the instance and the account', () => {
     // /v1/version really is admin-only — 401 unauthenticated and 401 for a
     // non-admin account, verified against this instance — so an admin sees it
     // filled in. That is the half of the tool's promise a stub cannot check.
-    expect(info).toContain('"version": "2.28');
+    // Any 2.x: the weekly run tests the floating v2 tag, not the pin.
+    expect(info).toMatch(/"version": "2\.\d+\.\d+/);
     // /v1/config really is public, which is what makes get_server_info the
     // one call worth trying before the credentials are right.
     expect(info).toContain('"disallowed_topics"');
