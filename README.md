@@ -59,7 +59,7 @@ stays out of the tool arguments and out of the model's context.
 
 ## Requirements
 
-- Node.js ≥ 22
+- Node.js ≥ 24
 - A reachable **ntfy** server. Credentials are optional: an instance that allows
   anonymous access needs none.
 

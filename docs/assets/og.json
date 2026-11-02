@@ -5,5 +5,5 @@
     "An MCP server for ntfy — notifications your",
     "assistant can send, read back and correct"
   ],
-  "badges": ["13 tools", "revise in place", "MIT", "Node ≥22"]
+  "badges": ["13 tools", "revise in place", "MIT"]
 }

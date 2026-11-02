@@ -24,8 +24,6 @@
   <text class="pill-label" x="411" y="486" text-anchor="middle">revise in place</text>
   <rect class="pill" x="563" y="452" width="91" height="52" rx="26" />
   <text class="pill-label" x="608.5" y="486" text-anchor="middle">MIT</text>
-  <rect class="pill" x="674" y="452" width="163" height="52" rx="26" />
-  <text class="pill-label" x="755.5" y="486" text-anchor="middle">Node ≥22</text>
 
   <text class="site" x="1184" y="486" text-anchor="end">ntfy-mcp.ni-c.de</text>
 </svg>
