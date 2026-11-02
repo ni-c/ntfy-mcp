@@ -101,7 +101,7 @@ number below one of them, write the missing test — do not lower the threshold.
   `tsconfig.test.json` project) and prettier, which also validates the YAML, JSON and
   Markdown files.
 
-CI runs lint, typecheck, build and the test suite on Node 22 and 24 with coverage
+CI runs lint, typecheck, build and the test suite on Node 24 and 26 with coverage
 thresholds, plus `npm audit`. CodeQL runs once the repository is public.
 
 ## Questions and bugs
